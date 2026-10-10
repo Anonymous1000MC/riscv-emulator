@@ -248,7 +248,15 @@ public final class CsrFile {
             case FFLAGS -> csr[FCSR] = (csr[FCSR] & ~FFLAGS_MASK) | (value & FFLAGS_MASK);
             case FRM -> csr[FCSR] = (csr[FCSR] & ~FRM_MASK) | (value << 5 & FRM_MASK);
             case FCSR -> csr[FCSR] = value & (FRM_MASK | FFLAGS_MASK);
-            case SSTATUS -> csr[MSTATUS] = (csr[MSTATUS] & ~SSTATUS_MASK) | (value & SSTATUS_MASK);
+            case SSTATUS -> {
+                // sstatus is a view of mstatus, not a register of its own, so a write may only
+                // touch the bits sstatus owns. Replacing mstatus wholesale with the masked value
+                // threw away MXL and UXL along with them, and with them the XLEN: the hart then
+                // faulted on the next access. Linux's local_irq_enable() is a csrsi sstatus, <<1,
+                // which triggered exactly this at every initcall.
+                csr[MSTATUS] = (csr[MSTATUS] & ~SSTATUS_MASK) | (value & SSTATUS_MASK);
+                refreshSd();
+            }
             case SIE -> csr[MIE] = (csr[MIE] & ~SIE_MASK) | (value & SIE_MASK);
             case SIP -> {
                 long writable = SIP_MASK & ~(1L << 7);
