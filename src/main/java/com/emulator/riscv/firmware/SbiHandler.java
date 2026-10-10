@@ -22,6 +22,7 @@ public final class SbiHandler {
     public static final int SBI_ERR_NOT_SUPPORTED = -2;
     public static final int SBI_ERR_INVALID_PARAM = -3;
     public static final int SBI_ERR_DENIED = -4;
+
     /**
      * Returned when a guest-supplied pointer is not addressable. Real firmware reports this rather
      * than trapping: a guest asking the firmware to write somewhere impossible is the guest's
@@ -39,31 +40,31 @@ public final class SbiHandler {
     private static final int LEGACY_SET_TIMER = 5;
     private static final int LEGACY_TIME = 6;
 
-    // Version 1.0 extension identifiers.
+    // Extension identifiers are the ASCII fourcc, not small ordinals. Probing is done by comparing
+    // the id a guest passes against these, which is why the kernel sends 0x48534d for HSM.
     public static final int EXT_BASE = 0x10;
-    public static final int EXT_TIME = 0x11;
-    public static final int EXT_IPI = 0x12;
-    public static final int EXT_RFENCE = 0x13;
-    public static final int EXT_HSM = 0x14;
-    public static final int EXT_HFENCE = 0x15;
-    public static final int EXT_SYSTEM_RESET = 0x17;
-    public static final int EXT_DEBUG_CONSOLE = 0x444D;
+    public static final int EXT_TIME = 0x54494D45;   // "TIME"
+    public static final int EXT_IPI = 0x735049;      // "IPI"
+    public static final int EXT_RFENCE = 0x52464E43; // "RFNC"
+    public static final int EXT_HSM = 0x48534D;      // "HSM"
+    public static final int EXT_SYSTEM_RESET = 0x53525354; // "SRST"
+    public static final int EXT_DEBUG_CONSOLE = 0x444D4443; // "DBCN"
 
-    // BASE extension functions.
-    private static final int BASE_PROBE = 0;
-    private static final int BASE_GET_SPEC = 1;
-    private static final int BASE_GET_IMPL_ID = 2;
-    private static final int BASE_GET_IMPL_VERSION = 3;
-    private static final int BASE_GET_IMPL_NAME = 4;
-    private static final int BASE_GET_MACHINE = 5;
-    private static final int BASE_GET_MACHINE_VERSION = 6;
-    private static final int BASE_GET_SBI_IMPL_ID = 7;
+    // BASE extension (EID 0x10) function ids, as the specification fixes them. The machine
+    // identification group sits at 4, 5 and 6, and there is no implementation-name function at
+    // all: this handler previously had the whole table shifted by one, so a kernel asking for the
+    // specification version (FID 0) was answered by the probe logic instead, which reported
+    // "extension 0 is not implemented" and made Linux fall back to SBI v0.
+    private static final int BASE_GET_SPEC_VERSION = 0;
+    private static final int BASE_GET_IMPL_ID = 1;
+    private static final int BASE_GET_IMPL_VERSION = 2;
+    private static final int BASE_PROBE_EXT = 3;
+    private static final int BASE_GET_MVENDORID = 4;
+    private static final int BASE_GET_MARCHID = 5;
+    private static final int BASE_GET_MIMPID = 6;
 
     // TIME extension functions.
-    private static final int TIME_TIME = 0;
-    private static final int TIME_CSR_FREQ = 1;
-    private static final int TIME_CSR_READ = 2;
-    private static final int TIME_CSR_WRITE = 3;
+    private static final int TIME_SET_TIMER = 0;
 
     private static final long SBI_IMPL_ID = 0x4D525356L; // "MRSV"
     private static final String IMPL_NAME = Theon.NAME;
@@ -155,7 +156,7 @@ public final class SbiHandler {
             case EXT_IPI:
                 // A single hart never needs to interrupt another hart.
                 return SBI_SUCCESS;
-            case EXT_RFENCE, EXT_HFENCE:
+            case EXT_RFENCE:
                 return SBI_SUCCESS;
             case EXT_HSM:
                 // Only hart zero exists, so start/stop/suspend/resume are either no-ops or
@@ -173,86 +174,62 @@ public final class SbiHandler {
     /** The v2.0 extension identifiers this handler answers for, probed by ID and not by name. */
     private static boolean isImplementedExtension(long extension) {
         return switch ((int) extension) {
-            case EXT_BASE, EXT_TIME, EXT_IPI, EXT_RFENCE, EXT_HSM, EXT_HFENCE,
+            case EXT_BASE, EXT_TIME, EXT_IPI, EXT_RFENCE, EXT_HSM,
                  EXT_SYSTEM_RESET, EXT_DEBUG_CONSOLE -> true;
             default -> false;
         };
     }
 
     private long base(long[] regs, Bus bus) {
+        // The SBI return convention is: the error code in a0, the value in a1. Writing a value
+        // into a0 instead made a kernel read "success" out of a version number and vice versa.
         switch ((int) regs[16]) {   // a6 holds the function id
-            case BASE_PROBE: {
-                long extension = regs[11];
-                // Probe has to name every extension this handler actually services. Reporting only
-                // the base extension makes a kernel conclude there is no timer, no IPI and no HSM,
-                // and it then stops asking for them - which is why the specification's function
-                // numbering matters: probe is 0, the spec version is 1, and the implementation ID
-                // is 2.
-                regs[10] = isImplementedExtension(extension) ? SBI_SUCCESS : SBI_ERR_NOT_SUPPORTED;
-                return SBI_SUCCESS;
-            }
-            case BASE_GET_SPEC:
-                regs[10] = (SBI_SPEC_MAJOR << 24) | (SBI_SPEC_MINOR << 16);
-                return SBI_SUCCESS;
-            case BASE_GET_IMPL_ID:
-                regs[10] = SBI_IMPL_ID;
-                return SBI_SUCCESS;
-            case BASE_GET_IMPL_VERSION:
-                regs[10] = 0x00010000L;
-                return SBI_SUCCESS;
-            case BASE_GET_IMPL_NAME: {
-                long err = writeName(bus, regs[11], IMPL_NAME);
-                if (err != SBI_SUCCESS) {
-                    return err;
-                }
+            case BASE_GET_SPEC_VERSION -> {
                 regs[10] = SBI_SUCCESS;
+                regs[11] = (SBI_SPEC_MAJOR << 24) | SBI_SPEC_MINOR;
                 return SBI_SUCCESS;
             }
-            case BASE_GET_MACHINE:
-                regs[10] = 0x000D_0000L;
-                return SBI_SUCCESS;
-            case BASE_GET_MACHINE_VERSION:
-                regs[10] = 0x00010000L;
-                return SBI_SUCCESS;
-            case BASE_GET_SBI_IMPL_ID:
+            case BASE_GET_IMPL_ID -> {
                 regs[10] = SBI_SUCCESS;
                 regs[11] = SBI_IMPL_ID;
-                regs[12] = 0x00010000L;
                 return SBI_SUCCESS;
-            default:
+            }
+            case BASE_GET_IMPL_VERSION -> {
+                regs[10] = SBI_SUCCESS;
+                regs[11] = 0x00010000L;
+                return SBI_SUCCESS;
+            }
+            case BASE_PROBE_EXT -> {
+                // FID 3, and the extension being probed arrives in a0. Reporting "not supported"
+                // for an extension this handler services is how the kernel lost its timer.
+                long extension = regs[10];
+                regs[10] = SBI_SUCCESS;
+                regs[11] = isImplementedExtension(extension) ? 1 : 0;
+                return SBI_SUCCESS;
+            }
+            case BASE_GET_MVENDORID, BASE_GET_MARCHID, BASE_GET_MIMPID -> {
+                // Plain value registers with no pointer, so nothing is ever written back here.
+                regs[10] = SBI_SUCCESS;
+                regs[11] = 0;
+                return SBI_SUCCESS;
+            }
+            default -> {
                 return SBI_ERR_NOT_SUPPORTED;
+            }
         }
-    }
-
-    /** Writes a NUL padded 64 byte identifier into the scratch area the caller supplied in a1. */
-    private static long writeName(Bus bus, long address, String text) {
-        byte[] buffer = new byte[64];
-        byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-        System.arraycopy(bytes, 0, buffer, 0, Math.min(bytes.length, 63));
-        return bus.dmaWrite(buffer, 0, buffer.length, address) ? SBI_SUCCESS
-                : SBI_ERR_INVALID_ADDRESS;
     }
 
     private long time(long[] regs) {
         switch ((int) regs[16]) {   // a6 holds the function id
-            case TIME_TIME:
-                regs[10] = now();
-                regs[11] = SBI_SUCCESS;
+            case TIME_SET_TIMER -> {
+                // FID 0. The compare value arrives in a0; Linux arms the timer through this and
+                // then waits for the CLINT comparison to raise the interrupt.
+                pendingTimer = regs[10];
                 return SBI_SUCCESS;
-            case TIME_CSR_FREQ:
-                regs[10] = timeFrequency;
-                regs[11] = SBI_SUCCESS;
-                return SBI_SUCCESS;
-            case TIME_CSR_READ:
-                regs[10] = timeFrequency;
-                regs[11] = now();
-                return SBI_SUCCESS;
-            case TIME_CSR_WRITE:
-                pendingTimer = regs[11];
-                regs[10] = SBI_SUCCESS;
-                return SBI_SUCCESS;
-            default:
+            }
+            default -> {
                 return SBI_ERR_NOT_SUPPORTED;
+            }
         }
     }
 

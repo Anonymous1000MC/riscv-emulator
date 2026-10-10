@@ -49,6 +49,24 @@ public final class DeviceTreeBuilder {
         return this;
     }
 
+    /**
+     * The ISA string the device tree advertises, built from {@code misa} in the canonical letter
+     * order the RISC-V specification fixes. Linux parses this string positionally, so the order
+     * matters as much as the contents.
+     */
+    private static String isaString() {
+        String order = "IEMAFDQLCBJTPVNSUHKORWXYZG";
+        long misa = CsrFile.MISA_VALUE;
+        StringBuilder sb = new StringBuilder("rv64");
+        for (int i = 0; i < order.length(); i++) {
+            char c = Character.toLowerCase(order.charAt(i));
+            if ((misa & (1L << (c - 'a'))) != 0) {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
     public byte[] build() {
         DeviceTree dt = new DeviceTree();
 
@@ -143,12 +161,13 @@ public final class DeviceTreeBuilder {
             dt.propertyU32("reg", i);
             dt.propertyU32("clock-frequency", clockFrequency);
             dt.propertyString("mmu-type", sv39 ? "riscv,sv39" : "riscv,sv48");
-            // The kernel derives its compiled-in ISA expectations from this string, so it has to
-            // name exactly what the interpreter decodes. Claiming vector here would make Linux emit
-            // instructions this core rejects as illegal; floating point is now genuinely decoded,
-            // so it is claimed.
-            dt.propertyString("riscv,isa", "rv64gc");
-            dt.propertyString("riscv,isa-base", "rv64imafdc");
+            // Linux 6.12 parses "riscv,isa" letter by letter and cross-checks it against its own
+            // compiled-in base and extension strings. It expects the canonical ordering, and it
+            // expects the single-string form: providing "riscv,isa-base" or
+            // "riscv,isa-extensions" instead made the kernel compare "rv64imafdc" against an
+            // extension list that did not contain it and BUG out at smpboot.c with "CPU with
+            // hartid=0 does not support ima". So advertise exactly what misa says, in order.
+            dt.propertyString("riscv,isa", isaString());
             dt.propertyStrings("riscv,isa-extensions",
                     "s", "u", "zicsr", "zifencei", "zihintpause", "zihintntl", "zihintnopval");
             dt.propertyU32("riscv,t", CsrFile.MISA_VALUE);

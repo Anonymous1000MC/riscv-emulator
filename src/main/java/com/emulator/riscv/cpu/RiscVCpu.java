@@ -1638,6 +1638,12 @@ public final class RiscVCpu {
         if (address < 0x300) {
             return privilege >= 1;
         }
+        // misa is readable from every privilege level: Linux reads it from S-mode to learn which
+        // extensions the hart implements, and rejecting it there made the kernel fall back to its
+        // compiled-in "riscv64ima" base and BUG out with "does not support ima".
+        if (address == CsrFile.MISA) {
+            return true;
+        }
         return privilege == 3;
     }
 

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
@@ -75,6 +76,7 @@ class SbiDtbTest {
     // a0 is x10, but a6 and a7 are x16 and x17, which is easy to get wrong when writing the
     // payload with raw register numbers.
     private static final int A0 = 10;
+    private static final int A1 = 11;
     private static final int A6 = 16;
     private static final int A7 = 17;
 
@@ -83,7 +85,10 @@ class SbiDtbTest {
     private static final int LEGACY_SHUTDOWN = 8;
 
     private static final int EXT_BASE = 0x10;
-    private static final int BASE_GET_IMPL_NAME = 4;
+    private static final int BASE_GET_SPEC_VERSION = 0;
+    private static final int BASE_GET_IMPL_ID = 1;
+    private static final int BASE_GET_IMPL_VERSION = 2;
+    private static final int BASE_PROBE_EXT = 3;
 
     private static final int PRIV_S = 1;
     private static final int PRIV_M = 3;
@@ -283,10 +288,11 @@ class SbiDtbTest {
         Fdt.Node cpu = fdt.node("cpus/cpu@0");
         assertNotNull(cpu, "the cpu node is present");
 
-        assertEquals("rv64gc", cpu.string("riscv,isa"),
+        assertEquals("rv64imafdctr", cpu.string("riscv,isa"),
                 "the kernel derives its ISA expectations from this string");
-        assertEquals("rv64imafdc", cpu.string("riscv,isa-base"),
-                "the base string omits s and u, which live in the extension list");
+        assertFalse(cpu.properties.containsKey("riscv,isa-base"),
+                "isa-base is omitted: Linux cross-checks it against its own base and rejects a"
+                        + " base advertising extensions it did not compile for");
 
         List<String> extensions = cpu.strings("riscv,isa-extensions");
         assertTrue(extensions.contains("s"), "s is advertised as an extension");
@@ -307,8 +313,8 @@ class SbiDtbTest {
     private long[] probe(long extension) {
         long[] regs = new long[32];
         regs[17] = SbiHandler.EXT_BASE; // a7 selects the base extension in the v2.0 interface
-        regs[10] = 0;                    // a6 = function 0, probe
-        regs[11] = extension;            // a1 = the extension being probed
+        regs[16] = BASE_PROBE_EXT;      // a6 = function 3, probe
+        regs[10] = extension;           // a0 = the extension being probed
         return regs;
     }
 
@@ -321,14 +327,14 @@ class SbiDtbTest {
                                      SbiHandler.EXT_HSM, SbiHandler.EXT_DEBUG_CONSOLE)) {
             long[] regs = probe(extension);
             assertEquals(SbiHandler.SBI_SUCCESS, sbi.call(regs, bus), "probe itself succeeds");
-            assertEquals(SbiHandler.SBI_SUCCESS, regs[10],
+            assertEquals(1, regs[11],
                     "extension 0x" + Integer.toHexString(extension) + " is implemented");
+            assertEquals(0, regs[10], "and the call itself reports no error");
         }
         long[] missing = probe(0x7FFF);
         assertEquals(SbiHandler.SBI_SUCCESS, sbi.call(missing, bus),
-                "the probe call itself succeeds; the answer is the value in a0");
-        assertEquals(SbiHandler.SBI_ERR_NOT_SUPPORTED, missing[10],
-                "and reports it in a0, where the guest can actually see it");
+                "the probe call itself succeeds; the answer is the value in a1");
+        assertEquals(0, missing[11], "an unimplemented extension reports 0, not an error");
     }
 
     @Test
@@ -336,41 +342,35 @@ class SbiDtbTest {
         // The v0.2 calling convention puts the extension in a7 and the *function* in a6; a0..a5 are
         // arguments. Dispatching on a0 made every BASE call look like a probe, because the kernel
         // zeroes a0 before the ecall, so the kernel read -2 out of GET_SPEC_VERSION and gave up on
-        // the firmware. Two tests here encoded that mistake by putting the function id in a0.
+        // the firmware.
         long[] version = new long[32];
-        version[16] = 1;        // a6 = BASE_GET_SPEC_VERSION
+        version[16] = BASE_GET_SPEC_VERSION;  // a6 = FID 0
         version[17] = SbiHandler.EXT_BASE;
         version[10] = 0x7FFF;   // a0 is an argument here and must not select the function
         sbi.call(version, bus);
-        assertEquals(0x02000000L, version[10], "a6 selects the function; a0 is ignored");
-
-        // And through the real ecall path, where the hart actually loads a6 before trapping.
-        long buffer = CODE + 0x3000;
-        Asm.emit(memory, CODE, concat(
-                loadPointer(11, buffer),
-                new int[] { Asm.addi(A6, 0, BASE_GET_IMPL_NAME), Asm.addi(A7, 0, SbiHandler.EXT_BASE),
-                            Asm.ecall() },
-                new int[] { Asm.jal(0, 0) }));
-        step(12);
-        assertEquals("Theon", readCString(buffer, 64),
-                "a real ecall to BASE_GET_IMPL_NAME dispatched on a6 and wrote the name");
+        assertEquals(0x02000000L, version[11], "a6 selects the function; a0 is ignored");
+        assertEquals(0, version[10], "and the call reports no error");
     }
 
     @Test
     void sbiBaseReportsTheSpecificationVersionAndImplementationId() {
         long[] version = new long[32];
-        version[16] = 1;        // a6 = function 1, get specification version
+        version[16] = BASE_GET_SPEC_VERSION;  // a6 = FID 0
         version[17] = SbiHandler.EXT_BASE;
         sbi.call(version, bus);
-        assertEquals(0x02000000L, version[10],
-                "the specification encodes the version as (major << 24) | (minor << 16)");
-        assertEquals(2, version[10] >>> 24, "so the major version is 2");
+        // The return convention is error in a0 and value in a1; putting the version in a0 made a
+        // kernel read "success" out of the version number and fall back to SBI v0.
+        assertEquals(0, version[10], "no error");
+        assertEquals(0x02000000L, version[11],
+                "the specification encodes the version as (major << 24) | minor");
+        assertEquals(2, version[11] >>> 24, "so the major version is 2");
 
         long[] id = new long[32];
-        id[16] = 2;            // a6 = function 2, get implementation ID
+        id[16] = BASE_GET_IMPL_ID;  // a6 = FID 1
         id[17] = SbiHandler.EXT_BASE;
         sbi.call(id, bus);
-        assertNotEquals(0L, id[10], "an implementation ID is reported, not zero");
+        assertEquals(0, id[10], "no error");
+        assertNotEquals(0L, id[11], "an implementation ID is reported in a1, not zero");
     }
 
     // ---- SBI ------------------------------------------------------------------------------------
@@ -417,19 +417,19 @@ class SbiDtbTest {
     }
 
     @Test
-    void sbiWritesTheImplementationNameThroughTheBus() {
-        // BASE_GET_IMPL_NAME writes 64 bytes through Bus.dmaWrite, so the pointer in a1 has to
-        // address a buffer that the hart can actually reach.
-        long buffer = CODE + 0x2000;
+    void baseProbeExtensionIsServicedThroughTheRealEcallPath() {
+        // FID 3 is probe_extension, the extension id arrives in a0, and the answer is 1 in a1 when
+        // the extension is implemented. This is how the kernel discovers its timer, so it has to
+        // work through a genuine ecall and not only through a direct handler call.
+        // BASE itself fits in 12 bits, so a single addi carries it; the fourcc TIME needs the
+        // pointer form and is checked by the direct-call test above instead.
         Asm.emit(memory, CODE, concat(
-                loadPointer(11, buffer),
-                new int[] { Asm.addi(A6, 0, BASE_GET_IMPL_NAME), Asm.addi(A7, 0, EXT_BASE), Asm.ecall() },
+                loadPointer(A0, SbiHandler.EXT_BASE),
+                new int[] { Asm.addi(A6, 0, BASE_PROBE_EXT),
+                            Asm.addi(A7, 0, SbiHandler.EXT_BASE), Asm.ecall() },
                 new int[] { Asm.jal(0, 0) }));
-
         step(12);
-
-        String name = readCString(buffer, 64);
-        assertEquals("Theon", name, "the base extension wrote its name through the bus");
+        assertEquals(1, cpu.reg(A1), "probe reports the BASE extension as implemented");
     }
 
     @Test
