@@ -968,8 +968,41 @@ class RiscVCpuTest {
         m.cpu.setPc(TestMachine.CODE);
         run(1);
         assertEquals(handler, m.cpu.pc());
-        assertEquals(3, m.csr.mcause(), "c.ebreak is breakpoint, cause 3");
+        // C.EBREAK raises a breakpoint exception, exactly like the uncompressed EBREAK: it is not
+        // an illegal instruction. This previously expected 2 and passed only because fetch()
+        // returned the wrong instruction word for it.
+        assertEquals(3, m.csr.mcause());
     }
+
+    @Test
+    void arithmeticShiftImmediateRejectsBit26() {
+        long handler = TestMachine.CODE + 0x380;
+        // SRAI has funct6 010000: bit 30 selects it, but bits 31 and 29:26 are still reserved.
+        // Bit 26 was previously left unchecked, so this encoding was wrongly accepted.
+        m.load(Asm.i((1 << 6) | 8, 5, 5, 6, 0x13));
+        m.csr.rawWrite(CsrFile.MTVEC, handler);
+        m.cpu.setPc(TestMachine.CODE);
+        run(1);
+        assertEquals(handler, m.cpu.pc(), "SRAI with bit 26 set must be rejected");
+        assertEquals(2, m.csr.mcause());
+    }
+
+    @Test
+    void instructionStraddlingAPageBoundaryIsFetchedCorrectly() {
+        // Put a 32-bit instruction so its first halfword sits in one page and its second in the
+        // next. Fetching all eight bytes from the first page's physical address would return the
+        // wrong upper half; the halves have to be translated independently.
+        long page = TestMachine.CODE & ~0xFFFL;
+        long straddle = page + 0xFFC;
+        int word = Asm.addi(6, 0, 42);
+        m.memory.write16(straddle, (short) (word & 0xFFFF));
+        m.memory.write16(straddle + 2, (short) (word >>> 16));
+        m.csr.rawWrite(CsrFile.MTVEC, TestMachine.CODE + 0x400);
+        m.cpu.setPc(straddle);
+        run(1);
+        assertEquals(42, m.reg(6), "the upper halfword must come from the next page");
+    }
+
 
     @Test
     void fetchSwitchesBetweenInstructionWidths() {

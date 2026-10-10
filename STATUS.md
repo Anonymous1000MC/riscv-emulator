@@ -9,7 +9,7 @@ in `com.emulator.riscv.Theon` and is what the SBI base extension and the device 
 
 `./gradlew clean build` succeeds and produces `build/libs/riscv-emulator-1.0.0.jar`.
 
-`./gradlew test` **passes**: 107 tests, 0 failures, 0 errors.
+`./gradlew test` **passes**: 109 tests, 0 failures, 0 errors.
 
 ## Finished and compiling
 
@@ -406,21 +406,31 @@ expected), 7.9 billion instructions retired at ~53 MIPS**, and `kernel_map` is c
 ### What still stops it
 
 It spins forever in `lib/vsprintf.c`'s `number()` - specifically the padding loop
-`while (--field_width >= 0)`. With a large negative `field_width` that runs about four billion
-iterations counting without storing, which is exactly the 7.9 billion instructions observed.
+`while (--field_width >= 0)` - which runs about two billion iterations counting without storing.
+That is essentially all of the 7.9 billion instructions observed.
 
 The kernel is formatting real banners at that point - `"Machine model: %s"`, `"%s (DT)"`,
 `"SBI specification v%lu.%lu detected"` - all present and intact in memory, so the strings are fine
-and `%s` handling works. What is wrong is the argument: `number()` is entered with
-`num = 0xffff0a00ffffff09` (garbage) and derives a field width of `0xfffffffe`, which is what
-`get_size()` produces when it is seeded with `-1` and reads a digit: `-1 * 10 + 8 = -2`. So the
-format specifier is being misparsed.
+and `%s` handling works.
 
-One concrete observation to chase: every one of these printk format strings has a `0x01` byte
-immediately before it in memory, and the `fmt` pointer reaching `vsnprintf` points **at that prefix
-byte** rather than at the first character. riscv encodes printk flags in a leading byte, so the
-caller is expected to skip one byte before formatting. Whether that skip is happening and my harness
-is reading the pre-skip pointer, or the skip genuinely did not execute, is the open question.
+**Corrected finding.** An earlier revision of this file claimed `number()` was entered with
+`num = 0xffff0a00ffffff09` (garbage) and that the format specifier was being misparsed by
+`get_size()`. That was a decoding error on my part, and it was wrong in two ways: `num` lives in
+`a2` (which is a legitimate `0`), and `a3 = 0xffff0a00ffffff09` *is* the by-value
+`struct printf_spec`. Decoded correctly - `field_width` is a **signed** 24-bit field and `base`
+sits at bits 40-47 - it reads `type=9, field_width=-1, flags=0, base=10, precision=-1`, which is
+exactly right for a plain `%lu`. `0xffffff` in a signed 24-bit field is -1, not 16777215.
+
+So the format string is parsed correctly and the spec is correct. `field_width` should reach -3
+after `field_width -= precision` and one more decrement, leaving the loop to not run at all. Since
+it does run, the fault is in **executing `number()`'s own instructions**: some instruction in
+`0xffffffff80fd908a..0x80fd92e4` computes a value that differs from what the source implies. See
+`BOOT_FAILURE.md` for the full analysis, the ruled-out list, and how to trace it.
+
+One earlier observation, now resolved: every printk format string has a `0x01` byte immediately
+before it in memory. That is the RISC-V printk level prefix (`01 36`), and `fmt` correctly points
+*past* it - it lands on the `.` just after the first `%lu`, which is exactly where it should be.
+This is not corruption.
 
 ### Conformance testing: what was taken from Sedna
 

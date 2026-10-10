@@ -42,16 +42,21 @@ These are the field-width padding loops. They should execute a handful of times;
 
 ## The exact symptom
 
+> **Correction.** An earlier revision of this file claimed the `printf_spec` arriving in `a3` was
+> corrupt (`base=0`, `field_width=0xffffff`). **That was wrong** — it came from reading
+> `field_width` as an unsigned 24-bit field and mis-placing `base`. The spec is in fact correct.
+> Do not chase a corrupt spec.
+
 `struct printf_spec` is passed **by value** to `number()` and is a single packed 64-bit word
 (`__packed`, `sizeof == 8`):
 
 ```c
 struct printf_spec {
-	unsigned int type:8;
-	signed int   field_width:24;
-	unsigned int flags:8;
-	unsigned int base:8;
-	signed int   precision:16;
+	unsigned int type:8;          /* bits  0-7  */
+	signed int   field_width:24;  /* bits  8-31 -- SIGNED */
+	unsigned int flags:8;         /* bits 32-39 */
+	unsigned int base:8;          /* bits 40-47 */
+	signed int   precision:16;    /* bits 48-63 -- SIGNED */
 } __packed;
 ```
 
@@ -62,19 +67,35 @@ a2 = 0x0000000000000000                              num
 a3 = 0xffff0a00ffffff09                              struct printf_spec
 ```
 
-Decoding `a3` by the field order above:
+Decoding `a3`, with the two signed fields interpreted as signed:
 
-| field | decoded | required for `%lu` |
-|---|---|---|
-| `type` | 9 | `FORMAT_TYPE_UL_LONG` |
-| `field_width` | `0x00ffffff` (16777215) | `-1` (no width) |
-| `flags` | 0 | 0 |
-| `base` | **0** | **10** |
-| `precision` | `-1` | `-1` |
+| field | bits | decoded | required for `%lu` |
+|---|---|---|---|
+| `type` | 0-7 | 9 | `FORMAT_TYPE_ULONG` |
+| `field_width` | 8-31 | `0xffffff` = **-1** | -1 (no width) ✓ |
+| `flags` | 32-39 | 0 | 0 ✓ |
+| `base` | 40-47 | **10** | 10 ✓ |
+| `precision` | 48-63 | `0xffff` = **-1** | -1 ✓ |
 
-`base = 0` and `field_width = 0xffffff` are wrong. `field_width` is the direct cause of the hang:
-`number()` computes a pad count from it, the count is zero-extended to 64 bits, and the loop bound
-becomes `buf + 0xffffff` — so the cursor walks toward a bogus `0xffffffff82e0...` target.
+**Every field is exactly what a plain `%lu` should produce.** `0xffffff` in a *signed* 24-bit
+field is -1, not 16777215; that single sign-extension mistake is what produced the earlier bogus
+diagnosis.
+
+`num = 0` is also legitimate: if the SBI BASE extension does not implement `get_spec_version`,
+Linux falls back to legacy SBI v0.1 and prints major version 0.
+
+## Hand-checkable expectation
+
+For `number(0, spec{field_width=-1, precision=-1, base=10})` the kernel should compute:
+
+* `i = 1` (the single digit `'0'`)
+* `precision = max(i, precision) = 1`
+* `field_width -= precision` → -2, stored in the 24-bit field as `0xfffffe`
+* `while (--field_width >= 0)` sees -3 and does **not** run
+
+The loop does run, for ~2 billion iterations. So the fault is in **executing `number()`'s own
+instructions** — some instruction in the `0xffffffff80fd908a..0x80fd92e4` range computes a value
+that differs from the above, and the first such instruction is the bug.
 
 ## The important negative result
 
@@ -86,11 +107,6 @@ becomes `buf + 0xffffff` — so the cursor walks toward a bogus `0xffffffff82e0.
 
 Every format string in `.rodata` is preceded by a 2-byte `01 36` tag. That is the RISC-V
 `printk` level prefix, and `fmt` correctly points *past* it. It is not corruption.
-
-So the parser walked the string correctly and still handed `number()` a corrupt spec. The
-corrupted 64-bit word is **computed by kernel code**, not by the emulator — the emulator only has
-to have executed `vsnprintf`'s instructions correctly. Which means some earlier instruction was
-mis-executed, and that instruction is the bug.
 
 ## Ruled out
 
@@ -108,10 +124,29 @@ These were checked directly and are **correct**:
 
 ## Fixed along the way
 
-`SRAIW`/`SRLIW` were shifting the full 64-bit register instead of the low 32 bits, so a negative
-32-bit operand with a dirty upper half shifted incorrectly. Fixed in `RiscVCpu.executeOpImm32` by
-casting to `int` before the shift. Regression test:
-`RiscVCpuTest.wordWidthShiftsIgnoreTheUpperHalf`.
+1. **`SRAIW`/`SRLIW` shifted the full 64-bit register** instead of the low 32 bits, so a negative
+   32-bit operand with a dirty upper half shifted incorrectly. Fixed in `RiscVCpu.executeOpImm32`
+   by casting to `int` before the shift.
+   Test: `RiscVCpuTest.wordWidthShiftsIgnoreTheUpperHalf`.
+
+2. **`checkShamt` under-checked the `SRAI` reserved bits.** The mask was `0xB8000000`, leaving bit
+   26 unchecked; it must be `0xBC000000` (bit 31 plus bits 29:26). This only made the emulator
+   *too lenient* — it accepted reserved encodings — so it is not this bug.
+   Test: `RiscVCpuTest.arithmeticShiftImmediateRejectsBit26`.
+
+3. **`fetch()` mishandled instructions that straddle a page boundary.** It translated only the
+   first page and read 8 bytes from that physical address, so a 32-bit instruction at page offset
+   `0xffe` took its second halfword from the *physically* adjacent page rather than the next
+   *virtual* page, and never took the access fault the second page owes. Now each halfword is
+   translated independently. Harmless inside the kernel's contiguous linear mapping, but it would
+   break user space and kernel modules — which matters for the goal of booting arbitrary distros.
+   Test: `RiscVCpuTest.instructionStraddlingAPageBoundaryIsFetchedCorrectly`.
+
+Fixing (3) also exposed that `RiscVCpuTest.compressedEbreakTraps` asserted `mcause == 2`
+(illegal instruction). `C.EBREAK` raises a **breakpoint** exception (`mcause == 3`), exactly like
+the uncompressed `EBREAK` — which the adjacent `ebreakTraps` test already asserted correctly. The
+test had been passing only because the old `fetch()` handed it the wrong instruction word; the
+expectation is now corrected to 3.
 
 ## Where to look next
 
@@ -124,6 +159,18 @@ Ordered by suspicion:
    the register save area would garble the `va_list` without any obvious fault.
 3. **CSR access** in the `printk`/`vsnprintf` path (`csrr`, `csrrs`, `csrrw`).
 4. **Stack alignment / calling convention** for the by-value 8-byte struct and for `va_list`.
+
+## Recommended: stop hunting these one at a time
+
+Roughly ten decoder bugs have now been found by hand-tracing, and this one still has not surfaced
+from inspection. That is the argument for checking in prebuilt conformance binaries and running
+them as a batch: `rv64ui-p`, `rv64um-p`, `rv64uc-p` and `rv64si-p` from `riscv/riscv-tests` would
+sweep the remaining instruction-level gaps in a single pass and give a definitive answer about which
+encodings are wrong, instead of one CPU state at a time.
+
+This is also what generalises. The stated goal is to boot **any** distro and kernel without
+faults, not one 6.12.112 image. Per-instruction conformance is the foundation for that; the current
+approach - infer a defect from one guest's behaviour - cannot scale to it.
 
 ## Reproducing the observation
 

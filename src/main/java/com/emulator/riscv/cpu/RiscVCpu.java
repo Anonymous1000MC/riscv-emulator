@@ -230,11 +230,21 @@ public final class RiscVCpu {
         if (!pmpAllows(pc, PMP_ACCESS_EXEC, privilege)) {
             throw new TrapException(INSTRUCTION_ACCESS_FAULT, pc);
         }
-        long pa = mmu.translate(pc, MMU.ACCESS_EXEC, privilege, sum, mxr);
-        if ((pa & 7) == 0) {
-            return memory.read64(pa) & 0xFFFF_FFFFL;
+        // A 32-bit instruction may straddle a page boundary, so the halves are translated
+        // independently: pulling all eight bytes from the first page's physical address would
+        // silently read the wrong bytes whenever the next virtual page is mapped elsewhere, and
+        // would skip the access fault that the second page owes. When the pair does not straddle,
+        // both halves come from the same translation.
+        long lo = mmu.translate(pc, MMU.ACCESS_EXEC, privilege, sum, mxr);
+        if ((pc & 0xFFF) <= 0xFFC) {
+            return memory.read32(lo);
         }
-        return memory.readMisaligned(pa, 8) & 0xFFFF_FFFFL;
+        int low = memory.read16(lo) & 0xFFFF;
+        if (!pmpAllows(pc + 2, PMP_ACCESS_EXEC, privilege)) {
+            throw new TrapException(INSTRUCTION_ACCESS_FAULT, pc + 2);
+        }
+        long hi = mmu.translate(pc + 2, MMU.ACCESS_EXEC, privilege, sum, mxr);
+        return ((long) (memory.read16(hi) & 0xFFFF) << 16) | low;
     }
 
     // ---- data access ----------------------------------------------------------------------------
@@ -1918,7 +1928,7 @@ public final class RiscVCpu {
     private static int checkShamt(long inst, boolean arithmetic) {
         // Bit 31 and bits 29:26 must always be zero. Bit 30 selects the arithmetic form, so it is
         // only reserved for the logical shifts.
-        long reserved = arithmetic ? 0xB800_0000L : 0xFC00_0000L;
+        long reserved = arithmetic ? 0xBC00_0000L : 0xFC00_0000L;
         if ((inst & reserved) != 0) {
             throw new TrapException(ILLEGAL_INSTRUCTION, sext(inst & 0xFFFF_FFFFL, 32));
         }
