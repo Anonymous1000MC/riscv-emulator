@@ -34,6 +34,7 @@ import static com.emulator.riscv.cpu.TrapException.USER_ECALL;
  * code.
  */
 public final class RiscVCpu {
+    private final long[] mretTraceSeen = new long[1];
 
     /** General purpose registers; {@code x[0]} is hardwired to zero. */
     public final long[] x = new long[32];
@@ -250,9 +251,6 @@ public final class RiscVCpu {
     // ---- data access ----------------------------------------------------------------------------
 
     private long load(long vaddr, int size, boolean signed) {
-        if ((vaddr & (size - 1)) != 0) {
-            throw new TrapException(LOAD_ADDR_MISALIGNED, vaddr);
-        }
         int accessPrivilege = dataPrivilege();
         if (!pmpAllows(vaddr, PMP_ACCESS_READ, accessPrivilege)) {
             throw new TrapException(TrapException.LOAD_ACCESS_FAULT, vaddr);
@@ -277,9 +275,6 @@ public final class RiscVCpu {
     }
 
     private void store(long vaddr, int size, long value) {
-        if ((vaddr & (size - 1)) != 0) {
-            throw new TrapException(STORE_ADDR_MISALIGNED, vaddr);
-        }
         int accessPrivilege = dataPrivilege();
         if (!pmpAllows(vaddr, PMP_ACCESS_WRITE, accessPrivilege)) {
             throw new TrapException(TrapException.STORE_ACCESS_FAULT, vaddr);
@@ -495,6 +490,13 @@ public final class RiscVCpu {
     }
 
     private void executeMret() {
+        if (System.getenv("MRET_TRACE") != null && mretTraceSeen[0] < 2000) {
+            mretTraceSeen[0]++;
+            System.out.printf("  MRET mstatus=0x%x MIE=%d MPIE=%d MPP=%d mepc=0x%x priv=%d%n",
+                csr.rawRead(CsrFile.MSTATUS), (csr.rawRead(CsrFile.MSTATUS)>>3)&1,
+                (csr.rawRead(CsrFile.MSTATUS)>>7)&1, (csr.rawRead(CsrFile.MSTATUS)>>11)&3,
+                csr.mepc(), privilege);
+        }
         long status = csr.mstatus();
         int target = (int) ((status >>> CsrFile.MSTATUS_MPP_SHIFT) & 3);
         status = (status & ~(1L << CsrFile.MSTATUS_MIE))
@@ -515,6 +517,14 @@ public final class RiscVCpu {
     }
 
     private void executeSret() {
+        if (System.getenv("TRACE_SB") != null) {
+            System.out.printf("  SRET mstatus=0x%x SIE=%d SPIE=%d SPP=%d sepc=0x%x priv=%d%n",
+                csr.rawRead(CsrFile.MSTATUS),
+                (csr.rawRead(CsrFile.MSTATUS)>>1)&1,
+                (csr.rawRead(CsrFile.MSTATUS)>>5)&1,
+                (csr.rawRead(CsrFile.MSTATUS)>>8)&1,
+                csr.sepc(), privilege);
+        }
         long status = csr.mstatus();
         int target = (status & CsrFile.MSTATUS_SPP_BIT) != 0 ? 1 : 0;
         status = (status & ~(1L << CsrFile.MSTATUS_SIE))

@@ -320,6 +320,36 @@ public final class RiscVEngine implements AutoCloseable {
         clint.tick();
         uart.flush();
         framebuffer.tick();
+        bridgeTimerToSupervisor();
+    }
+
+    /**
+     * Presents the CLINT timer interrupt to S-mode as {@code sip.STIP}.
+     *
+     * <p>Linux programs the timer through {@code mtimecmp} over SBI, which makes the CLINT raise
+     * {@code mip.MTIP}. MTIP is a machine-mode pending bit and is not among the bits {@code mideleg}
+     * forwards, so it would be raised in M-mode - where this platform has no guest trap vector, and
+     * {@code MIE} is clear because the kernel runs with interrupts delegated. The interrupt would
+     * then never be delivered, and a guest waiting on a timer spins for ever: that is the hang in
+     * {@code do_raw_spin_lock} once the boot reaches {@code memmap_init_range}.
+     *
+     * <p>OpenSBI's machine layer performs the same translation, raising {@code sip.STIP} once the
+     * compare register has been reached so that the delegated S-mode timer interrupt fires. Only
+     * forward it when M-mode cannot consume it, so an M-mode guest that keeps {@code MIE} set still
+     * sees the real MTIP.
+     */
+    private void bridgeTimerToSupervisor() {
+        long mip = csr.rawRead(CsrFile.MIP);
+        long mtip = 1L << 7;
+        if ((mip & mtip) == 0) {
+            return;
+        }
+        boolean mie = (csr.rawRead(CsrFile.MSTATUS) & (1L << CsrFile.MSTATUS_MIE)) != 0;
+        boolean delegatedToSupervisor = ((csr.mideleg() >>> 5) & 1) != 0;
+        if (mie || !delegatedToSupervisor) {
+            return;
+        }
+        csr.setMipBits(1L << 5);
     }
 
     private void sampleIps() {

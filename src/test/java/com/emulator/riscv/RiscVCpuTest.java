@@ -1134,30 +1134,27 @@ class RiscVCpuTest {
     }
 
     @Test()
-    void misalignedLoadTraps() {
-        long handler = TestMachine.CODE + 0x400;
+    void misalignedLoadSucceeds() {
+        // Unaligned accesses are handled in hardware here; see misalignedStoreSucceeds for why
+        // trapping them kills this kernel's startup probe.
         loadUsing(TestMachine.DATA, Asm.lw(6, 5, 1));
-        m.csr.rawWrite(CsrFile.MTVEC, handler);
         m.cpu.setPc(TestMachine.CODE);
-        runUntil(handler, 32);
-        assertEquals(handler, m.cpu.pc());
-        assertEquals(4, m.csr.mcause(), "load address misaligned is cause 4");
-        assertEquals(TestMachine.DATA + 1, m.csr.mtval());
-        assertEquals(3, m.cpu.privilege(), "taken in M-mode when nothing is delegated");
+        run(1);
+        assertEquals(TestMachine.CODE + 4, m.cpu.pc(), "the misaligned load did not trap");
+        assertEquals(0, m.csr.mcause(), "no exception was recorded");
     }
 
     @Test()
-    void misalignedStoreTraps() {
-        long handler = TestMachine.CODE + 0x400;
+    void misalignedStoreSucceeds() {
+        // RISC-V permits implementations to handle unaligned accesses in hardware. This kernel is
+        // built without the software emulator, so its unaligned-access probe issues deliberately
+        // misaligned accesses at startup and expects them to work: a trap there lands in M-mode,
+        // where the kernel has installed no vector, and the boot dies.
         loadUsing(TestMachine.DATA, Asm.sw(0, 5, 1));
-        m.csr.rawWrite(CsrFile.MTVEC, handler);
         m.cpu.setPc(TestMachine.CODE);
-        // Stop at the handler: the memory beyond it is zeros, and running on would overwrite
-        // mcause with a later illegal instruction.
-        runUntil(handler, 32);
-        assertEquals(handler, m.cpu.pc());
-        assertEquals(6, m.csr.mcause(), "store address misaligned is cause 6");
-        assertEquals(TestMachine.DATA + 1, m.csr.mtval());
+        run(1);
+        assertEquals(TestMachine.CODE + 4, m.cpu.pc(), "the misaligned store did not trap");
+        assertEquals(0, m.csr.mcause(), "no exception was recorded");
     }
 
     @Test

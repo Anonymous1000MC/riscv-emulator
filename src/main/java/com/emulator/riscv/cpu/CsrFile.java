@@ -485,11 +485,11 @@ public static final long SSTATUS_MASK =
     }
 
     public long sepc() {
-        return csr[MEPC];
+        return csr[SEPC];
     }
 
     public void setSepc(long value) {
-        csr[MEPC] = value;
+        csr[SEPC] = value;
     }
 
     public long mcause() {
@@ -501,11 +501,11 @@ public static final long SSTATUS_MASK =
     }
 
     public long scause() {
-        return csr[MCAUSE];
+        return csr[SCAUSE];
     }
 
     public void setScause(long value) {
-        csr[MCAUSE] = value;
+        csr[SCAUSE] = value;
     }
 
     public long mtval() {
@@ -517,11 +517,11 @@ public static final long SSTATUS_MASK =
     }
 
     public long stval() {
-        return csr[MTVAL];
+        return csr[STVAL];
     }
 
     public void setStval(long value) {
-        csr[MTVAL] = value;
+        csr[STVAL] = value;
     }
 
     public long mscratch() {
