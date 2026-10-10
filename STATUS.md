@@ -33,16 +33,32 @@ Current split over the RV64 suites:
 | `rv64um` | 11 pass / 15 fail |
 | `rv64ua` | 19 pass / 19 fail |
 | `rv64mi` | 4 pass / 5 fail |
+| `rv64si` | 1 pass / 7 fail |
 
 **Every `-p-` (physical) test passes; every `-v-` (virtual) test fails, with the identical exit
-code 32.** That uniformity says the remaining failures are one harness gap rather than 51 ISA
-defects. The `-v-` binaries share a `vm_boot` prologue that installs a page table and then returns
-to user mode at virtual addresses its own table does not map; the harness is supposed to have left
-the test image mapped, the way firmware would. Theon faults there, which is architecturally
-correct, so the harness has to provide that mapping without disturbing the guest's own PTEs.
+code 32.** That uniformity says the remaining failures are one harness or prologue issue rather
+than 51 ISA defects. `fnuecke/sedna` passes all 404 of these same binaries (verified by running its
+own Gradle suite here), so the gap is worth chasing and is Theon-specific.
 
-The `rv64mi` and `rv64si` exceptions are being worked through one subtest at a time;
-`rv64mi-p-ma_addr`, which exercises the Sv39 page walk directly, passes.
+What has been established so far about the `-v-` failure, and what has not:
+
+* The prologue is not the problem. The guest builds its page tables, writes `satp`, reads it back
+  and the equality check passes. `MRET`/`SRET` and the privilege transitions are correct: the test
+  drops from M-mode to U-mode at virtual address `0x2968` exactly as the source intends.
+* The fault is an instruction page fault on that return, because the guest's own leaf for VPN 2
+  maps VA `0x2000` to physical `0x2000`, while `userstart` actually lives at `0x80002968`. The PTE
+  the guest wrote carries PPN `0x2` where `0x80002` is required, so the upper bits of the physical
+  address were lost while the PTE was being computed.
+* That points at a 32-bit truncation somewhere in the guest's PTE-building arithmetic, most likely
+  in the shift/zero-extension idiom used to pack the PPN. It has **not** been localised to a single
+  instruction yet.
+* Neither of the fixes made so far changes the result: reverting the `misa`/`MRET` fix, and
+  disabling the machine-mode translation bypass, both still give 51/51 on `rv64ui`. So neither is
+  the cause.
+
+Working from a known-good oracle is the fastest route now. sedna's `ISATests` harness is in the
+tree at `/tmp/sedna` and passes these binaries; comparing its register and memory state against
+Theon's step for step from `0x80000000` would identify the diverging instruction directly.
 
 ## Finished and compiling
 
