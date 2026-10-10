@@ -267,6 +267,7 @@ public final class RiscVEngine implements AutoCloseable {
     }
 
     private final long[] ecallN = new long[1];
+    private final long[] clintArmed = {Long.MIN_VALUE};
 
     private boolean serviceSupervisorCall(long cause, long epc, long[] regs, CsrFile csrs) {
         if (System.getenv("SBI_ECALL") != null && ecallN[0] < 20) {
@@ -276,6 +277,15 @@ public final class RiscVEngine implements AutoCloseable {
         }
         sbi.call(regs, bus);
         csrs.setMepc(epc + 4);
+        // SBI set_timer must arm the CLINT, not just record a deadline in the handler: the
+        // compare register is what the device compares mtime against. Leaving the two separate
+        // left mtimecmp at zero, so every mtime was "past due" and the timer interrupt fired
+        // continuously without ever settling the guest.
+        long armed = sbi.pendingTimer();
+        if (armed != clintArmed[0]) {
+            clintArmed[0] = armed;
+            clint.setMtimecmp(0, armed);
+        }
         if (System.getenv("SBI_ECALL") != null && ecallN[0] <= 20) {
             System.out.printf("        -> mepc=0x%x a0=0x%x a1=0x%x%n",
                     csrs.mepc(), regs[10], regs[11]);

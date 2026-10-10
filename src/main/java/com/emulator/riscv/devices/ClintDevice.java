@@ -46,6 +46,11 @@ public final class ClintDevice implements Device {
         return mtimecmp[hart];
     }
 
+    /** Programs the timer compare from firmware, as the SBI set_timer call does. */
+    public void setMtimecmp(int hart, long value) {
+        mtimecmp[hart] = value;
+    }
+
     @Override
     public int read(int size, long pa) {
         if (size != 8 && size != 4) {
