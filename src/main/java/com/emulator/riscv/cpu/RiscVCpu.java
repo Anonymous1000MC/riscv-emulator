@@ -1650,7 +1650,13 @@ public final class RiscVCpu {
             case 7 -> csr.write(csrAddress, old & ~operand); // CSRRCI: zimm 0 clears nothing
             default -> throw illegal(inst);
         }
-        long value = (funct3 == 1 || funct3 == 5) ? old : csr.read(csrAddress);
+        // Every form of the CSR instruction returns the pre-modification value in rd, not the
+        // newly written one. Reading the register back after the write made the set/clear forms
+        // hand rd the result: Linux's local_irq_save() is "csrrci a0, sstatus, SR_SIE", so a0
+        // received SIE already cleared, the pairing local_irq_restore(flags) ORed that back in
+        // and SIE stayed clear for ever - every spin_lock_irqsave left interrupts disabled,
+        // which is what the "initcall returned with disabled interrupts" warnings were.
+        long value = old;
         if (rd != 0) x[rd] = value;
         pc += 4;
     }

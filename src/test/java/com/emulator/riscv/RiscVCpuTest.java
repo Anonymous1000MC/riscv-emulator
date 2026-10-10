@@ -1499,11 +1499,14 @@ class RiscVCpuTest {
         m.load(
                 Asm.addi(5, 0, -1),
                 Asm.csrrs(6, CsrFile.MSTATUS, 5),
-                Asm.csrrs(7, CsrFile.SSTATUS, 0));
-        run(3);
-        long mstatus = m.reg(6);
+                Asm.csrrs(7, CsrFile.SSTATUS, 0),
+                Asm.csrrs(8, CsrFile.MSTATUS, 0));
+        run(4);
+        // The set form writes the register and returns the value it had *before* the write, so
+        // reading back through a second, pure read is what inspects the result.
+        long written = m.reg(8);
         long sstatus = m.reg(7);
-        assertTrue((mstatus & (1L << CsrFile.MSTATUS_MIE)) != 0, "MIE is writable in mstatus");
+        assertTrue((written & (1L << CsrFile.MSTATUS_MIE)) != 0, "MIE is writable in mstatus");
         assertEquals(0, sstatus & (1L << CsrFile.MSTATUS_MIE),
                 "MIE is not exposed through sstatus");
     }
