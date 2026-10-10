@@ -285,6 +285,11 @@ public final class RiscVEngine implements AutoCloseable {
         if (armed != clintArmed[0]) {
             clintArmed[0] = armed;
             clint.setMtimecmp(0, armed);
+            // set_timer clears the pending timer interrupt, same as OpenSBI on a hart without
+            // the Sstc extension: Linux's timer handler re-arms through this call and relies on
+            // it to drop STIP, so without it the interrupt is taken again immediately.
+            csrs.clearMipBits(1L << 5);
+            lastMtip[0] = false;
         }
         if (System.getenv("SBI_ECALL") != null && ecallN[0] <= 20) {
             System.out.printf("        -> mepc=0x%x a0=0x%x a1=0x%x%n",
@@ -359,18 +364,24 @@ public final class RiscVEngine implements AutoCloseable {
      * forward it when M-mode cannot consume it, so an M-mode guest that keeps {@code MIE} set still
      * sees the real MTIP.
      */
+    private final boolean[] lastMtip = new boolean[1];
+
     private void bridgeTimerToSupervisor() {
         long mip = csr.rawRead(CsrFile.MIP);
-        long mtip = 1L << 7;
-        if ((mip & mtip) == 0) {
-            return;
-        }
+        boolean mtip = (mip & (1L << 7)) != 0;
         boolean mie = (csr.rawRead(CsrFile.MSTATUS) & (1L << CsrFile.MSTATUS_MIE)) != 0;
         boolean delegatedToSupervisor = ((csr.mideleg() >>> 5) & 1) != 0;
         if (mie || !delegatedToSupervisor) {
+            lastMtip[0] = mtip;
             return;
         }
-        csr.setMipBits(1L << 5);
+        // Rising edge only. Recomputing STIP from MTIP on every visit meant it stayed set after
+        // the interrupt was taken, so the handler was re-entered on the first instruction after
+        // mret - a livelock with the PC pinned just past the SBI ecall.
+        if (mtip && !lastMtip[0]) {
+            csr.setMipBits(1L << 5);
+        }
+        lastMtip[0] = mtip;
     }
 
     private void sampleIps() {

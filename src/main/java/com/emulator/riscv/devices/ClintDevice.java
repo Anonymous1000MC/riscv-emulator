@@ -95,7 +95,10 @@ public final class ClintDevice implements Device {
 
     @Override
     public void tick() {
-        if (time() >= mtimecmp[0]) {
+        // The compare is unsigned: a deadline of (uint64_t)-1 means "never", and comparing it
+        // signed makes it less than mtime, so the timer interrupt asserted immediately and the
+        // guest livelocked on it.
+        if (Long.compareUnsigned(time(), mtimecmp[0]) >= 0) {
             csr.setMipBits(1L << 7);
         } else {
             csr.clearMipBits(1L << 7);
