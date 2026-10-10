@@ -1199,6 +1199,51 @@ class RiscVCpuTest {
     }
 
     @Test
+    void sepcIsTheSupervisorViewOfMepc() {
+        enterMachineMode();
+        m.csr.setMepc(0x1234);
+        assertEquals(0x1234, m.csr.read(CsrFile.SEPC), "sepc must read back what mepc holds");
+        m.csr.write(CsrFile.SEPC, 0xABCD);
+        assertEquals(0xABCD, m.csr.mepc(), "writing sepc must land in mepc, not its own slot");
+    }
+
+    @Test
+    void misaIsWarlWithHardwiredMxl() {
+        enterMachineMode();
+        long misa = m.csr.read(CsrFile.MISA);
+        assertEquals(2L, (misa >>> 62) & 3, "MXL must report the widest supported XLEN");
+        assertNotEquals(0, misa & (1L << 2), "the C extension is implemented");
+        // CSRRCI misa, C must clear only that bit: MXL and every other extension survive.
+        m.load(Asm.csrrci(0, CsrFile.MISA, 1 << 2));
+        run(1);
+        assertEquals(2L, (m.csr.read(CsrFile.MISA) >>> 62) & 3, "MXL is hardwired");
+        assertEquals(0, m.csr.read(CsrFile.MISA) & (1L << 2), "the C bit is cleared");
+        assertEquals(0xA112DL & ~(1 << 2), m.csr.read(CsrFile.MISA) & 0x7FFFFFFFFFFFL,
+                "no other extension bit changed");
+    }
+
+    @Test
+    void mretMasksMepcBitOneWhenCompressedIsDisabled() {
+        enterMachineMode();
+        // With C present a 2-byte aligned target is legal and only bit 0 is masked.
+        m.csr.setMepc(0x1002);
+        m.load(Asm.jalr(0, 0, 0));           // a placeholder so run(1) has something to execute
+        m.csr.setMstatus(m.csr.mstatus() | (3L << CsrFile.MSTATUS_MPP_SHIFT));
+        m.load(0x30200073);                  // mret
+        m.cpu.setPc(TestMachine.CODE);
+        run(1);
+        assertEquals(0x1002, m.cpu.pc(), "mret keeps mepc[1] when C is enabled");
+
+        // Disable C: IALIGN becomes 32 and mepc[1] must be masked away.
+        m.csr.write(CsrFile.MISA, m.csr.read(CsrFile.MISA) & ~(1L << 2));
+        m.csr.setMepc(0x1002);
+        m.load(0x30200073);
+        m.cpu.setPc(TestMachine.CODE);
+        run(1);
+        assertEquals(0x1000, m.cpu.pc(), "mret masks mepc[1] when IALIGN is 32");
+    }
+
+    @Test
     void csrInstructions() {
         enterMachineMode();
         m.load(
