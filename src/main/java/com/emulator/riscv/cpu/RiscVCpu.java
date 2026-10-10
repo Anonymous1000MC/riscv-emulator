@@ -425,15 +425,24 @@ public final class RiscVCpu {
         int target = (privilege == 3 || !delegated) ? 3 : 1;
 
         long status = csr.mstatus();
-        // SIE <- SPIE, SPIE <- MIE, MIE <- 0
-        status = (status & ~(1L << CsrFile.MSTATUS_SIE))
-                | ((status >>> CsrFile.MSTATUS_SPIE) & 1L) << CsrFile.MSTATUS_SIE;
-        status = (status & ~(1L << CsrFile.MSTATUS_SPIE))
-                | ((status >>> CsrFile.MSTATUS_MIE) & 1L) << CsrFile.MSTATUS_SPIE;
-        status &= ~(1L << CsrFile.MSTATUS_MIE);
-        // MPP <- previous privilege, SPP <- (previous privilege < M)
-        status = (status & ~(3L << CsrFile.MSTATUS_MPP_SHIFT))
-                | (long) privilege << CsrFile.MSTATUS_MPP_SHIFT;
+        // A trap preserves only the interrupt-enable fields of the mode it is entering: taking
+        // one into M-mode touches MIE and MPIE, taking one into S-mode touches SIE and SPIE. The
+        // other pair belongs to a different context and has to survive untouched. Saving across
+        // both made S-mode's saved SPIE read back as zero - a `sret` then restored SIE from that
+        // zero - so every initcall Linux completed reported "disabled interrupts".
+        if (target == 3) {
+            long oldMie = (status >>> CsrFile.MSTATUS_MIE) & 1L;
+            status = (status & ~(1L << CsrFile.MSTATUS_MIE))                // MIE <- 0
+                    | (oldMie << CsrFile.MSTATUS_MPIE);                      // MPIE <- MIE
+            status = (status & ~(3L << CsrFile.MSTATUS_MPP_SHIFT))
+                    | (long) privilege << CsrFile.MSTATUS_MPP_SHIFT;
+        } else {
+            long oldSie = (status >>> CsrFile.MSTATUS_SIE) & 1L;
+            status = (status & ~(1L << CsrFile.MSTATUS_SIE))                 // SIE <- 0
+                    | (oldSie << CsrFile.MSTATUS_SPIE);                       // SPIE <- SIE
+        }
+        // SPP records whether the mode below was supervisor, and MPRV is cleared on return from
+        // M-mode throughout, matching the definitions of both fields.
         status = privilege < 3 ? status | CsrFile.MSTATUS_SPP_BIT
                 : status & ~CsrFile.MSTATUS_SPP_BIT;
         csr.setMstatus(status);

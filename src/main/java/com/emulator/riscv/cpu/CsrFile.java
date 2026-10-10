@@ -120,13 +120,18 @@ public final class CsrFile {
             | (1L << MSTATUS_MBE);
 
     /** The subset of {@link #MSTATUS_WRITE_MASK} that {@code sstatus} exposes. */
-    public static final long SSTATUS_MASK =
+    /**
+ * The bits {@code sstatus} owns and only those: SIE, SPIE, UBE, SPP, VS, FS, XS, SUM, MXR, UXL
+ * and SD. MPIE and MPP are machine-context fields and must not be readable through the supervisor
+ * view - leaking MPIE let a guest read a stale machine value as SPIE, so an {@code sret} restored
+ * SIE from the wrong bit and every initcall reported "disabled interrupts".
+ */
+public static final long SSTATUS_MASK =
             (1L << MSTATUS_SIE)
             | (1L << MSTATUS_SPIE)
             | (1L << MSTATUS_UBE)
-            | (1L << MSTATUS_MPIE)
             | (1L << MSTATUS_SPP)
-            | (0x7L << MSTATUS_VS_SHIFT)
+            | (0x3L << MSTATUS_VS_SHIFT)
             | (0x3L << MSTATUS_FS_SHIFT)
             | (0x3L << MSTATUS_XS_SHIFT)
             | (1L << MSTATUS_SUM)
@@ -528,11 +533,11 @@ public final class CsrFile {
     }
 
     public long sscratch() {
-        return csr[MSCRATCH];
+        return csr[SSCRATCH];
     }
 
     public void setSscratch(long value) {
-        csr[MSCRATCH] = value;
+        csr[SSCRATCH] = value;
     }
 
     public long mtvec() {
@@ -540,7 +545,7 @@ public final class CsrFile {
     }
 
     public long stvec() {
-        return csr[MTVEC];
+        return csr[STVEC];
     }
 
     // ---- PMP ------------------------------------------------------------------------------
@@ -575,18 +580,16 @@ public final class CsrFile {
 
     // ---- helpers --------------------------------------------------------------------------
 
-    private static int alias(int address) {
+private static int alias(int address) {
+        // Only registers that are genuinely *views* of a machine register alias onto it: sstatus,
+        // sie and sip expose parts of mstatus, mie and mip. The rest of the supervisor set are
+        // registers in their own right, stored under their own address. Folding stvec and sscratch
+        // onto their machine counterparts let a guest's `csrw stvec` overwrite the M-mode trap
+        // vector, so a machine trap then jumped into the guest's own handler and ran off the
+        // mapped image.
         return switch (address) {
             case SSTATUS -> MSTATUS;
             case SIE -> MIE;
-            case STVEC -> MTVEC;
-            case SSCRATCH -> MSCRATCH;
-            // sepc aliases mepc just like the rest of the supervisor view. Leaving it out gave
-            // it storage of its own, and 0x141 was missing from isImplemented() as well, so every
-            // access raised an illegal instruction instead of touching mepc.
-            case SEPC -> MEPC;
-            case SCAUSE -> MCAUSE;
-            case STVAL -> MTVAL;
             case SIP -> MIP;
             default -> address;
         };

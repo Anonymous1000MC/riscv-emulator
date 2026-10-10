@@ -11,6 +11,43 @@ in `com.emulator.riscv.Theon` and is what the SBI base extension and the device 
 
 `./gradlew test` **passes**: 112 tests, 0 failures, 0 errors.
 
+## Boot progress
+
+`LinuxBootRunner` now drives Linux 6.12.112 to:
+
+* `Linux version 6.12.112`, `Machine model: Theon RISC-V emulator`, 2,049 console lines.
+* `SBI specification v2.0 detected`, and every extension the handler services is reported:
+  TIME, IPI, RFENCE, SRST, HSM. The base ISA and ELF capability lines print.
+* Clock source registered at 10 MHz with timer-driven `sched_clock`; BogoMIPS calibration runs.
+* `SBI HSM extension detected` during `setup_smp`, so the machine reaches `kernel_init`.
+
+Two defects stopped it getting there and are now fixed:
+
+1. **The SBI base extension function ids were shifted by one and the extension ids were small
+   ordinals instead of the ASCII fourccs.** A kernel asking for `get_spec_version` (FID 0) was
+   answered by the probe logic, which read `a0` as an extension id, got 0, and reported "not
+   implemented" - so Linux fell back to SBI v0 and never asked for a timer. FIDs are now the
+   specification's (0 = get_spec_version, 3 = probe_extension, 4/5/6 = the machine identification
+   registers), those three return plain values with no memory access, and the extension ids are
+   `"TIME"`, `"IPI"`, `"RFNC"`, `"HSM"`, `"SRST"` and `"DBCN"`. There is no `get_impl_name` in SBI at
+   all, so the base extension no longer writes through the bus.
+2. **sstatus writes replaced the whole backing mstatus with the masked value**, discarding MXL,
+   UXL and every machine-only field. Linux's `local_irq_enable()` is a `csrsi sstatus, 2`, so this
+   left SIE clear and every initcall printed "returned with disabled interrupts".
+
+## The remaining blocker
+
+After roughly 90M instructions the guest traps on a load access fault at
+`0xffffffff81006064`. That address is *inside the kernel image*, mapped by the kernel's own linear
+identity, so the access itself is legitimate: the page tables covering it have gone away. Linux
+still boots and prints after this point in QEMU, so it is a MMU or trap-state defect rather than a
+guest bug. The trap is only visible second-hand - the fault lands on the kernel's `handle_exception`
+entry, overwriting the primary trap, so the runner reports the handler address rather than the
+instruction that failed.
+
+Also worth checking: `riscv: base ISA extensions` prints empty even though the device tree
+advertises `riscv,isa = "rv64imafdctr"`.
+
 ## ISA conformance (official riscv-tests)
 
 The prebuilt binaries from `fnuecke/sedna` (MIT, 404 files) now run against Theon through

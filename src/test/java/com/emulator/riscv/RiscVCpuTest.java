@@ -1094,8 +1094,10 @@ class RiscVCpuTest {
 
     @Test
     void sretReturnsFromSupervisor() {
+        // A delegated trap lands in S-mode, so the vector it takes must come from stvec; mtvec is
+        // the machine vector and the two no longer share storage.
         long handler = TestMachine.CODE + 0x300;
-        m.csr.rawWrite(CsrFile.MTVEC, handler);
+        m.csr.rawWrite(CsrFile.STVEC, handler);
         m.csr.setMedeleg(1L << 9);
         m.load(Asm.ecall());
         m.cpu.setPc(TestMachine.CODE);
@@ -1199,12 +1201,17 @@ class RiscVCpuTest {
     }
 
     @Test
-    void sepcIsTheSupervisorViewOfMepc() {
+    void sepcHasItsOwnSlot() {
+        // Only sstatus, sie and sip are views. sepc, stvec and sscratch are registers in their own
+        // right: folding sepc onto mepc gave the trap path a slot it shares with the machine one,
+        // and the two wrote over each other.
         enterMachineMode();
         m.csr.setMepc(0x1234);
-        assertEquals(0x1234, m.csr.read(CsrFile.SEPC), "sepc must read back what mepc holds");
+        assertEquals(0x1234, m.csr.mepc(), "mepc round-trips");
+        assertEquals(0, m.csr.read(CsrFile.SEPC), "sepc does not mirror mepc");
         m.csr.write(CsrFile.SEPC, 0xABCD);
-        assertEquals(0xABCD, m.csr.mepc(), "writing sepc must land in mepc, not its own slot");
+        assertEquals(0xABCD, m.csr.read(CsrFile.SEPC), "sepc holds what was written");
+        assertEquals(0x1234, m.csr.mepc(), "and mepc is unchanged by it");
     }
 
     @Test
@@ -1350,14 +1357,15 @@ class RiscVCpuTest {
                 "csrw sscratch at literal 0x140 from S-mode must not trap");
         assertEquals(11, m.reg(11), "execution continued past the literal-address access");
 
-        // Now check sscratch is really mscratch, and that it did not land in stval.
+        // sscratch is its own register, so a write to it must not appear in mscratch either: a
+        // guest that saves its tp there must not overwrite the machine one, and vice versa.
         enterMachineMode();
         m.load(
                 Asm.i(0x340, 0, 2, 9, 0x73),    // csrr s1, mscratch
                 Asm.i(0x343, 0, 2, 10, 0x73));  // csrr a0, stval
         m.cpu.setPc(TestMachine.CODE);
         run(2);
-        assertEquals(0x2A, m.reg(9), "sscratch (0x140) must be backed by mscratch (0x340)");
+        assertEquals(0, m.reg(9), "sscratch (0x140) is not backed by mscratch (0x340)");
         assertEquals(0, m.reg(10), "sscratch must not be backed by stval (0x343)");
     }
 
@@ -1466,19 +1474,25 @@ class RiscVCpuTest {
         assertFalse((misa & (1L << 20)) != 0, "V is not implemented and must not be advertised");
     }
     @Test
-    void supervisorCsrsAreAliasedOntoMachineCsrs() {
+    void supervisorScratchAndTvecHaveTheirOwnStorage() {
+        // Only sstatus, sie and sip are views of machine registers. sscratch and stvec are separate
+        // registers, so a guest must not be able to reach mscratch or mtvec through them: writing
+        // stvec used to land in mtvec, and a guest trap vector then replaced the machine one.
+        long mtvecBefore = m.csr.rawRead(CsrFile.MTVEC);
+        long mscratchBefore = m.csr.rawRead(CsrFile.MSCRATCH);
         m.load(
                 Asm.lui(5, 0x40),
                 Asm.csrrw(6, CsrFile.SSCRATCH, 5),
-                Asm.csrrs(7, CsrFile.SSCRATCH, 0));
-        run(3);
-        assertEquals(0x40000, m.reg(7));
-        // The same storage is visible as mscratch once the hart is in M-mode.
-        enterMachineMode();
-        m.loadAt(TestMachine.CODE + 12, Asm.csrrs(8, CsrFile.MSCRATCH, 0));
-        m.cpu.setPc(TestMachine.CODE + 12);
-        run(1);
-        assertEquals(0x40000, m.reg(8), "sscratch and mscratch are the same register");
+                Asm.csrrw(7, CsrFile.STVEC, 5),
+                Asm.csrrs(8, CsrFile.SSCRATCH, 0),
+                Asm.csrrs(9, CsrFile.STVEC, 0));
+        run(5);
+        assertEquals(0x40000, m.reg(8), "sscratch round-trips");
+        assertEquals(0x40000, m.reg(9), "stvec round-trips");
+        assertEquals(mscratchBefore, m.csr.rawRead(CsrFile.MSCRATCH),
+                "mscratch is untouched by a write to sscratch");
+        assertEquals(mtvecBefore, m.csr.rawRead(CsrFile.MTVEC),
+                "mtvec is untouched by a write to stvec");
     }
 
     @Test
