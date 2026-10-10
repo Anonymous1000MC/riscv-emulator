@@ -1843,11 +1843,12 @@ public final class RiscVCpu {
                         | (((inst >>> 12) & 1) << 5)
                         | (((inst >>> 2) & 7) << 6);
                 requireFp(inst);
-                if (rd == 0) {
-                    throw illegal(inst); // the compressed form has no rd = 0 form
+                // rd = 0 is the HINT form and executes as a no-op, exactly like C.LWSP/C.LDSP
+                // below. Only C.LWSP/C.LDSP are truly reserved at rd = 0.
+                if (rd != 0) {
+                    f[rd] = load(x[2] + imm, 8, false);
+                    markFpDirty();
                 }
-                f[rd] = load(x[2] + imm, 8, false);
-                markFpDirty();
             }
             case 2 -> { // C.LWSP
                 long imm = (((inst >>> 4) & 7) << 2)

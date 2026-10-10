@@ -36,6 +36,9 @@ public final class MMU {
     public static final int MODE_SV39 = 8;
     public static final int MODE_SV48 = 9;
 
+    /** Privilege level at which satp translation is bypassed unless MPRV is set. */
+    public static final int PRIV_M = 3;
+
     private static final long PTE_R = 1L << 1;
     private static final long PTE_W = 1L << 2;
     private static final long PTE_X = 1L << 3;
@@ -119,6 +122,12 @@ public final class MMU {
     public long translate(long vaddr, int access, int privilege, boolean sum, boolean mxr) {
         int mode = activeMode();
         if (mode == MODE_BARE) {
+            return vaddr;
+        }
+        // Machine mode does not use translation unless mstatus.MPRV is set, and MPRV never
+        // applies to instruction fetch (RISC-V Privileged, "Translation Detail").
+        boolean mprv = (csr.rawRead(CsrFile.MSTATUS) & (1L << CsrFile.MSTATUS_MPRV)) != 0;
+        if (privilege == PRIV_M && (access == MMU.ACCESS_EXEC || !mprv)) {
             return vaddr;
         }
         int faultCause = faultCause(access);

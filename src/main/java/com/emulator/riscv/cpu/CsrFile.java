@@ -565,6 +565,10 @@ public final class CsrFile {
             case SIE -> MIE;
             case STVEC -> MTVEC;
             case SSCRATCH -> MSCRATCH;
+            // sepc aliases mepc just like the rest of the supervisor view. Leaving it out gave
+            // it storage of its own, and 0x141 was missing from isImplemented() as well, so every
+            // access raised an illegal instruction instead of touching mepc.
+            case SEPC -> MEPC;
             case SCAUSE -> MCAUSE;
             case STVAL -> MTVAL;
             case SIP -> MIP;
@@ -593,7 +597,9 @@ public final class CsrFile {
             case FFLAGS, FRM, FCSR,
                  MSTATUS, MISA, MEDELEG, MIDELEG, MIE, MTVEC, MCOUNTEREN, MSTATUSH,
                  MSCRATCH, MEPC, MCAUSE, MTVAL, MIP,
-                 SSTATUS, SIE, STVEC, SSCRATCH, SCAUSE, STVAL, SIP, SENV_CFG, SATP ->
+                 // SEPC belongs here as well: isImplemented() runs before alias() resolves the
+                 // supervisor view, so an alias alone would still raise an illegal instruction.
+                 SSTATUS, SIE, STVEC, SSCRATCH, SEPC, SCAUSE, STVAL, SIP, SENV_CFG, SATP ->
                     true;
             default -> address >= PMPADDR0 && address < PMPCFG0 + 4;
         };
