@@ -108,13 +108,13 @@ public final class SbiHandler {
         long result = function == 0 ? legacy(regs) : extended(function, regs, bus);
         if (result < 0) {
             callsFailed++;
-            // Errors have to be reported in a0. The success paths already write their result
-            // there themselves, and overwriting here would discard it; the negative paths leave
-            // a0 holding whatever the caller passed in, which the guest would then read as a
-            // successful result. A kernel probing for an extension it does not get would carry
-            // on as if the call worked.
-            regs[10] = result;
         }
+        // The error code goes in a0 regardless of outcome: a guest reads a0 to decide whether the
+        // call worked, so success has to write SBI_SUCCESS there too. Writing it only on the error
+        // path left a0 holding whatever the caller passed in, which is the *argument* for
+        // set_timer - that call takes its deadline in a0, so the guest read the deadline back as
+        // an error code and concluded the SBI timer extension had failed.
+        regs[10] = result;
         return result;
     }
 

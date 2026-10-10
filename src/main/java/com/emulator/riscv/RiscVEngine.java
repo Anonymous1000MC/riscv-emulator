@@ -266,9 +266,20 @@ public final class RiscVEngine implements AutoCloseable {
         cpu.reg(11, dtbAddress); // a1 = device tree
     }
 
+    private final long[] ecallN = new long[1];
+
     private boolean serviceSupervisorCall(long cause, long epc, long[] regs, CsrFile csrs) {
+        if (System.getenv("SBI_ECALL") != null && ecallN[0] < 20) {
+            System.out.printf("  ECALL#%d cause=%d a7=0x%x a6=0x%x a0=0x%x a1=0x%x a2=0x%x epc=0x%x%n",
+                    ecallN[0], cause, regs[17], regs[16], regs[10], regs[11], regs[12], epc);
+            ecallN[0]++;
+        }
         sbi.call(regs, bus);
         csrs.setMepc(epc + 4);
+        if (System.getenv("SBI_ECALL") != null && ecallN[0] <= 20) {
+            System.out.printf("        -> mepc=0x%x a0=0x%x a1=0x%x%n",
+                    csrs.mepc(), regs[10], regs[11]);
+        }
         return true;
     }
 
