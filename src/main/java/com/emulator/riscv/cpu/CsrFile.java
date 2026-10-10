@@ -249,16 +249,31 @@ public static final long SSTATUS_MASK =
         // destination is resolved first. Switching on the aliased address is what keeps a write to
         // stvec from landing in a slot that read() never consults.
         int target = alias(address);
+        // The supervisor *views* are the exception to that: alias() rewrites 0x100 to 0x300 for
+        // sstatus, so a switch on the aliased address can never take a "case SSTATUS" and falls
+        // through to the default arm, which overwrites the whole machine register with the masked
+        // view. That discarded MIE, MPIE, MPP and MXL every time a guest ran "csrs sstatus,
+        // SR_SIE" - Linux's local_irq_enable() - so the interrupt enable bits were wiped at the
+        // moment they were set, and the timer interrupt could never be delivered.
+        if (address == SSTATUS) {
+            csr[MSTATUS] = (csr[MSTATUS] & ~SSTATUS_MASK) | (value & SSTATUS_MASK);
+            refreshSd();
+            return;
+        }
+        if (address == SIE) {
+            csr[MIE] = (csr[MIE] & ~SIE_MASK) | (value & SIE_MASK);
+            return;
+        }
+        if (address == SIP) {
+            long writable = SIP_MASK & ~(1L << 7);
+            csr[MIP] = (csr[MIP] & ~writable) | (value & writable);
+            return;
+        }
         switch (target) {
             case FFLAGS -> csr[FCSR] = (csr[FCSR] & ~FFLAGS_MASK) | (value & FFLAGS_MASK);
             case FRM -> csr[FCSR] = (csr[FCSR] & ~FRM_MASK) | (value << 5 & FRM_MASK);
             case FCSR -> csr[FCSR] = value & (FRM_MASK | FFLAGS_MASK);
             case SSTATUS -> {
-                // sstatus is a view of mstatus, not a register of its own, so a write may only
-                // touch the bits sstatus owns. Replacing mstatus wholesale with the masked value
-                // threw away MXL and UXL along with them, and with them the XLEN: the hart then
-                // faulted on the next access. Linux's local_irq_enable() is a csrsi sstatus, <<1,
-                // which triggered exactly this at every initcall.
                 csr[MSTATUS] = (csr[MSTATUS] & ~SSTATUS_MASK) | (value & SSTATUS_MASK);
                 refreshSd();
             }

@@ -396,13 +396,24 @@ public final class RiscVCpu {
         }
         long delegation = csr.mideleg();
         int target = privilege == 3 ? 3 : 1;
+        // An interrupt is taken only if the mode it would be taken in has its interrupt-enable
+        // bit set: SIE for a supervisor target, MIE for a machine one. Delivering it regardless
+        // let a masked interrupt through; the trap entry then saved that cleared SIE into SPIE,
+        // and sret copied it straight back, so the guest ended up with interrupts permanently
+        // masked and its timer could never fire again.
+        boolean sie = (csr.rawRead(CsrFile.MSTATUS) & (1L << CsrFile.MSTATUS_SIE)) != 0;
+        boolean mie = (csr.rawRead(CsrFile.MSTATUS) & (1L << CsrFile.MSTATUS_MIE)) != 0;
         for (int irq = 0; irq < 16; irq++) {
             if ((active & (1L << irq)) == 0) {
                 continue;
             }
-            if (target == 1 && ((delegation >>> irq) & 1) == 0) {
+            int taken = target;
+            if (taken == 1 && ((delegation >>> irq) & 1) == 0) {
                 // Not delegated to S-mode, so it must be taken in M-mode.
-                target = 3;
+                taken = 3;
+            }
+            if (taken == 1 ? !sie : !mie) {
+                continue;
             }
             enterTrap(TrapException.INTERRUPT_BIT | irq, 0L);
             return true;
