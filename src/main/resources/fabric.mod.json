@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "riscv-emulator",
+  "version": "${version}",
+  "name": "RISC-V Emulator",
+  "description": "Hardware-accelerated RV64IMACU Linux emulator with MMU, PCI-free VirtIO devices and an in-game 1080p framebuffer.",
+  "authors": [
+    "riscv-emulator contributors"
+  ],
+  "contact": {},
+  "license": "MIT",
+  "icon": "assets/riscv-emulator/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      {
+        "adapter": "default",
+        "value": "com.emulator.RiscVEmulatorMod"
+      }
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

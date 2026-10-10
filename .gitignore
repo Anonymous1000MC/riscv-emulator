@@ -1,0 +1,17 @@
+build/
+.gradle/
+run/
+config/
+riscv_machines/
+*.iml
+.idea/
+
+# Large kernel/disk payloads: regenerate with scripts/build_kernel.sh
+src/test/resources/payloads/Image
+src/test/resources/payloads/*.raw
+*.img
+
+# Unused client-side code carried over from an earlier codebase (com.emulator.client).
+# Not referenced by src/ and not compiled; kept locally only until its origin is confirmed.
+reference/
+
