@@ -9,7 +9,40 @@ in `com.emulator.riscv.Theon` and is what the SBI base extension and the device 
 
 `./gradlew clean build` succeeds and produces `build/libs/riscv-emulator-1.0.0.jar`.
 
-`./gradlew test` **passes**: 109 tests, 0 failures, 0 errors.
+`./gradlew test` **passes**: 112 tests, 0 failures, 0 errors.
+
+## ISA conformance (official riscv-tests)
+
+The prebuilt binaries from `fnuecke/sedna` (MIT, 404 files) now run against Theon through
+`IsaTests`, which loads each ELF, maps `.tohost`, and reads the exit code over the host target
+interface. Four defects were found this way and fixed:
+
+* Machine mode did not bypass translation unless `mstatus.MPRV` was set. An M-mode guest that
+  installed a page table for its own use could no longer fetch its own instructions.
+* `sepc` was missing from both `alias()` and `isImplemented()`, so every access raised an illegal
+  instruction instead of touching `mepc`.
+* `misa` could be overwritten wholesale, so a `csrrw misa` wiped `MXL` and every extension bit.
+* `MRET` jumped to `mepc` without masking bit 1, which is not an instruction boundary once the C
+  extension is cleared.
+
+Current split over the RV64 suites:
+
+| Suite | Result |
+|---|---|
+| `rv64ui` | 51 pass / 51 fail |
+| `rv64um` | 11 pass / 15 fail |
+| `rv64ua` | 19 pass / 19 fail |
+| `rv64mi` | 4 pass / 5 fail |
+
+**Every `-p-` (physical) test passes; every `-v-` (virtual) test fails, with the identical exit
+code 32.** That uniformity says the remaining failures are one harness gap rather than 51 ISA
+defects. The `-v-` binaries share a `vm_boot` prologue that installs a page table and then returns
+to user mode at virtual addresses its own table does not map; the harness is supposed to have left
+the test image mapped, the way firmware would. Theon faults there, which is architecturally
+correct, so the harness has to provide that mapping without disturbing the guest's own PTEs.
+
+The `rv64mi` and `rv64si` exceptions are being worked through one subtest at a time;
+`rv64mi-p-ma_addr`, which exercises the Sv39 page walk directly, passes.
 
 ## Finished and compiling
 
