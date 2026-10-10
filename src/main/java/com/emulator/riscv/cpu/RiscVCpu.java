@@ -476,6 +476,15 @@ public final class RiscVCpu {
         return code == USER_ECALL || code == SUPERVISOR_ECALL || code == MACHINE_ECALL;
     }
 
+    /**
+     * Whether the C extension is currently enabled in {@code misa}. Instruction alignment rules
+     * follow it: with C present a 2-byte-aligned target is legal, without it IALIGN is 32 and
+     * bit 1 of the target address must be masked.
+     */
+    private boolean compressedEnabled() {
+        return (csr.read(CsrFile.MISA) & (1L << 2)) != 0;
+    }
+
     private void executeMret() {
         long status = csr.mstatus();
         int target = (int) ((status >>> CsrFile.MSTATUS_MPP_SHIFT) & 3);
@@ -488,7 +497,10 @@ public final class RiscVCpu {
             status |= (1L << CsrFile.MSTATUS_SUM) | (1L << CsrFile.MSTATUS_MXR);
         }
         csr.setMstatus(status);
-        this.pc = csr.mepc();
+        // With the C extension disabled IALIGN is 32, so mepc[1] is not a legal instruction
+        // boundary and MRET must mask it off rather than jumping into the middle of an
+        // instruction. Leaving it set transfers control two bytes into whatever is there.
+        this.pc = csr.mepc() & (compressedEnabled() ? ~1L : ~3L);
         this.privilege = target;
         refreshStatusCache();
     }

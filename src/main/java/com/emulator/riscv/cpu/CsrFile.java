@@ -280,6 +280,14 @@ public final class CsrFile {
                 satpListener.run();
             }
             case MSCRATCH -> csr[MSCRATCH] = value;
+            case MISA -> {
+                // misa is WARL: MXL is hardwired to the widest supported XLEN, and only the
+                // extension bits the implementation actually has may be cleared. Letting a write
+                // replace the whole register let csrci misa, <C> wipe MXL and every other
+                // extension, so a guest probing misa saw garbage afterwards.
+                long writable = MISA_VALUE & 0x7FFF_FFFF_FFFFL;
+                csr[MISA] = (MISA_VALUE & ~0x7FFF_FFFF_FFFFL) | (value & writable);
+            }
             case MCAUSE -> csr[MCAUSE] = value;
             case MTVAL -> csr[MTVAL] = value;
             case PMPCFG0, PMPCFG0 + 1, PMPCFG0 + 2, PMPCFG0 + 3 -> {
