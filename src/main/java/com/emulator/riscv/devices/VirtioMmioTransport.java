@@ -359,10 +359,22 @@ public final class VirtioMmioTransport implements Device {
         bus.write32Phy(at + 4, length);
     }
 
-    /** Publishes a completion: the ring element plus the index that makes it visible. */
-    public static void completeUsed(VirtioDevice.Virtqueue queue, Bus bus, int slot, int id, int length) {
+    /**
+     * Publishes one completion.
+     *
+     * <p>The element goes at {@code slot}, which is the position the driver reads next, while the
+     * published index is how <em>many</em> buffers have completed. Publishing the slot instead
+     * leaves the index one behind on the very first request, so the driver compares its own
+     * counter against an unchanged index, concludes there is nothing to reap, and the transfer
+     * that already finished is never collected.
+     *
+     * @param slot position within the ring, {@code index} masked to the queue size
+     * @param index number of buffers the driver has now published, which is one past {@code slot}
+     */
+    public static void completeUsed(VirtioDevice.Virtqueue queue, Bus bus, int slot, int index,
+                                    int id, int length) {
         writeUsed(queue, bus, slot, id, length);
-        bus.write16Phy(queue.usedAddress() + 2, (short) (slot & 0xFFFF));
+        bus.write16Phy(queue.usedAddress() + 2, (short) (index & 0xFFFF));
     }
 
     public static void publishUsed(VirtioDevice.Virtqueue queue, Bus bus, int index) {

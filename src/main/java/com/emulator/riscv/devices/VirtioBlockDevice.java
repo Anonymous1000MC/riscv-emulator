@@ -136,11 +136,9 @@ public final class VirtioBlockDevice extends AbstractVirtioDevice {
             Served served = serveRequest(head);
             lastAvailable = (lastAvailable + 1) & 0xFFFF;
             used++;
-            // The element belongs at the slot the driver is about to read, which is the one
-            // before the index being published: it consumes used->ring[last_used] and then
-            // advances last_used itself. Writing it at used % size puts the completion one slot
-            // ahead of where the driver looks, which is a different descriptor.
-            VirtioMmioTransport.completeUsed(queue, bus, (used - 1) & (size - 1), head,
+            // The element belongs at the slot the driver reads next, which is the position
+            // before the counter it is about to publish.
+            VirtioMmioTransport.completeUsed(queue, bus, (used - 1) & (size - 1), used, head,
                     served.written());
         }
         if (used != VirtioMmioTransport.usedIndex(queue, bus)) {
@@ -148,7 +146,6 @@ public final class VirtioBlockDevice extends AbstractVirtioDevice {
         }
     }
 
-    /** What one request did, so the used ring can report the right length. */
     private record Served(int written) {
     }
 
