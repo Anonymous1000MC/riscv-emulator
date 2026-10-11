@@ -15,6 +15,13 @@ import com.emulator.riscv.cpu.CsrFile;
 /** RISC-V supervisor/machine external interrupt numbers on the per-hart interruptor. */
 public final class DeviceTreeBuilder {
 
+    /**
+     * Size of the PLIC register window, as the SiFive specification lays it out.
+     *
+     * <p>Must be at least this even though only the first few kilobytes are modelled.
+     */
+    private static final long PLIC_WINDOW_SIZE = 0x0060_0000L;
+
     /** Machine external interrupt on the per-hart interruptor. */
     private static final int RV_IRQ_M_EXT = 11;
     /** Supervisor external interrupt on the per-hart interruptor. */
@@ -231,9 +238,13 @@ public final class DeviceTreeBuilder {
         // Platform level interrupt controller, two interrupt cells: source then hart context.
         dt.beginNode("interrupt-controller@" + Long.toHexString(MemoryMap.PLIC_BASE));
         dt.propertyStrings("compatible", "sifive,plic-1.0.0", "riscv,plic0");
-        dt.propertyReg(MemoryMap.PLIC_BASE,
-                MemoryMap.PLIC_CONTEXT_BASE + (long) hartCount * MemoryMap.PLIC_CONTEXT_STRIDE,
-                2, 2);
+        // The window must be the full 0x600000 the SiFive controller is specified to occupy,
+        // not merely the context registers. Sizing it to just the contexts makes the kernel size
+        // its early reservations wrongly, and the damage surfaces much later and somewhere
+        // entirely unrelated: the percpu area came out unmapped and the first thing to touch it
+        // was plic_starting_cpu faulting on a store. Verified by bisection against QEMU's own
+        // device tree, which does work: shrink only this size and the fault reproduces.
+        dt.propertyReg(MemoryMap.PLIC_BASE, PLIC_WINDOW_SIZE, 2, 2);
         dt.propertyEmpty("interrupt-controller");
         dt.propertyU32("#interrupt-cells", 1);
         dt.propertyU32("#address-cells", 0);

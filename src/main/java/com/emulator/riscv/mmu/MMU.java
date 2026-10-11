@@ -35,6 +35,7 @@ public final class MMU {
     public static final int MODE_BARE = 0;
     public static final int MODE_SV39 = 8;
     public static final int MODE_SV48 = 9;
+    public static final int MODE_SV57 = 10;
 
     /** Privilege level at which satp translation is bypassed unless MPRV is set. */
     public static final int PRIV_M = 3;
@@ -132,7 +133,15 @@ public final class MMU {
         }
         int faultCause = faultCause(access);
         int asid = (int) ((csr.satp() & SATP_ASID_MASK) >>> SATP_ASID_SHIFT);
-        int levels = mode == MODE_SV48 ? 4 : 3;
+        // Sv57 adds a fifth level. The walk indexes every level with a nine bit field at i * 9,
+        // so it already generalises; only the depth differs. Falling back to three levels for a
+        // guest that selected Sv57 or Sv48 walks the wrong tables entirely, which shows up as
+        // perfectly valid kernel mappings mysteriously absent.
+        int levels = switch (mode) {
+            case MODE_SV57 -> 5;
+            case MODE_SV48 -> 4;
+            default -> 3;
+        };
 
         long vpn = vaddr >>> PAGE_SHIFT;
         long tag = vpn << 1;
