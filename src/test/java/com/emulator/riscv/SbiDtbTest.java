@@ -297,9 +297,28 @@ class SbiDtbTest {
         List<String> extensions = cpu.strings("riscv,isa-extensions");
         assertTrue(extensions.contains("s"), "s is advertised as an extension");
         assertTrue(extensions.contains("u"), "u is advertised as an extension");
-        for (String forbidden : List.of("v", "f", "d")) {
-            assertFalse(extensions.contains(forbidden),
-                    forbidden + " must not be advertised: " + extensions);
+        // The base extensions must be listed too. The kernel builds its extension set from this
+        // property, and with only s and u present it reported an empty "base ISA extensions",
+        // concluded there was no FPU, and trapped the first user-space C.FSD as illegal.
+        for (String base : List.of("i", "m", "a", "f", "d", "c")) {
+            assertTrue(extensions.contains(base),
+                    base + " must be advertised as an extension: " + extensions);
+        }
+        // Every single-letter base extension advertised here must be one misa actually
+        // implements, or the kernel builds its set from strings the hardware does not have. The
+        // z* extensions are not in misa and are checked separately against the canonical ISA
+        // string's implied base.
+        long misa = CsrFile.MISA_VALUE;
+        for (String base : List.of("i", "m", "a", "f", "d", "c")) {
+            assertTrue((misa & (1L << (base.charAt(0) - 'a'))) != 0,
+                    "riscv,isa-extensions advertises " + base + " but misa does not implement it");
+        }
+        String isa = cpu.string("riscv,isa");
+        for (String ext : extensions) {
+            if (ext.length() == 1 && !"s".equals(ext) && !"u".equals(ext)) {
+                assertTrue(isa.contains(ext),
+                        "base extension " + ext + " must appear in riscv,isa " + isa);
+            }
         }
 
         // The riscv,t property is a single cell, so it carries the extension bits without MXL; if

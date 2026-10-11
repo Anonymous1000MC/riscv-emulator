@@ -180,7 +180,14 @@ public final class DeviceTreeBuilder {
             // extension list that did not contain it and BUG out at smpboot.c with "CPU with
             // hartid=0 does not support ima". So advertise exactly what misa says, in order.
             dt.propertyString("riscv,isa", isaString());
+            // The kernel builds its extension set from riscv,isa-extensions, and prints
+            // "riscv: base ISA extensions" from it. Listing only the single-letter priv modes
+            // left that list empty, so the kernel thought there was no floating point, has_fpu()
+            // was false, start_thread never set SR_FS_INITIAL, and the first user-space C.FSD
+            // trapped as an illegal instruction. The base extensions have to be named here too,
+            // alongside the canonical riscv,isa string above.
             dt.propertyStrings("riscv,isa-extensions",
+                    "i", "m", "a", "f", "d", "c",
                     "s", "u", "zicsr", "zifencei", "zihintpause", "zihintntl", "zihintnopval");
             dt.propertyU32("riscv,t", CsrFile.MISA_VALUE);
             dt.propertyU32("phandle", phandleCpu[i]);
