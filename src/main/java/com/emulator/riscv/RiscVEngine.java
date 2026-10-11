@@ -377,26 +377,42 @@ public final class RiscVEngine implements AutoCloseable {
      * sees the real MTIP.
      */
 
+    private boolean timerLastMtip;
+    private boolean timerStipAsserted;
+
     private void bridgeTimerToSupervisor() {
         boolean mtip = (csr.rawRead(CsrFile.MIP) & (1L << 7)) != 0;
-        boolean delegatedToSupervisor = ((csr.mideleg() >>> 5) & 1) != 0;
-        if (!delegatedToSupervisor || cpu.privilege() == com.emulator.riscv.mmu.MMU.PRIV_M) {
+        boolean stip = (csr.rawRead(CsrFile.MIP) & (1L << 5)) != 0;
+        if (((csr.mideleg() >>> 5) & 1) == 0 || cpu.privilege() == MMU.PRIV_M) {
+            timerLastMtip = mtip;
+            timerStipAsserted = false;
             return;
         }
-        // Forwarded by level, not on a rising edge. From below M-mode the timer is only reachable
-        // by trapping to M-mode, and with no machine handler installed that leads nowhere, so
-        // the interrupt has to be presented to the supervisor as STIP.
+        // From below M-mode the timer is only reachable by trapping to M-mode, and with no machine
+        // handler installed that leads nowhere, so the interrupt has to be presented to the
+        // supervisor as STIP.
         //
-        // Gating this on MIE was wrong: MIE is meaningless in S-mode but the kernel leaves it
-        // set, so the gate read as "M-mode will take this" and STIP was never asserted at all.
-        // The guest then sat waiting for a tick that could not arrive.
+        // Gating on MIE was wrong: MIE is meaningless in S-mode but the kernel leaves it set, so
+        // the gate always read as "M-mode will take this" and no tick was ever delivered.
         //
-        // Level forwarding is what stops this being a livelock. STIP stays asserted until the
-        // guest re-arms, and re-arming through set_timer clears it, so each tick is delivered
-        // exactly once. An edge trigger was wrong the other way: MTIP is a level that stays high
-        // until mtimecmp moves forward, so once it was seen no further tick would ever fire.
-        if (mtip) {
+        // Asserting on the level was wrong the other way. MTIP stays high until mtimecmp moves
+        // forward, so re-asserting STIP on every visit took the interrupt again immediately
+        // after the guest acknowledged it, over and over. Forwarding is now edge triggered, and
+        // the guest's own acknowledge is respected: once it has cleared STIP the bridge stays
+        // quiet until MTIP has genuinely dropped and risen again.
+        if (!mtip) {
+            timerLastMtip = false;
+            timerStipAsserted = false;
+            return;
+        }
+        if (!timerLastMtip) {
+            timerLastMtip = true;
+            timerStipAsserted = true;
             csr.setMipBits(1L << 5);
+            return;
+        }
+        if (timerStipAsserted && !stip) {
+            timerStipAsserted = false;
         }
     }
 
