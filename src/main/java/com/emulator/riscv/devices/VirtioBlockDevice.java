@@ -188,14 +188,19 @@ public final class VirtioBlockDevice extends AbstractVirtioDevice {
         try {
             return switch ((int) type) {
                 case VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT -> {
-                    boolean writing = type == VIRTIO_BLK_T_OUT;
+                    // A read descriptor is marked writable because the device fills it; a write
+                    // descriptor is marked read-only because the device drains it. The direction
+                    // the *device* moves data is therefore the opposite of the guest's, and
+                    // selecting on the guest's own direction skipped every payload buffer and
+                    // made every read fail with I/O error.
+                    boolean deviceWrites = type == VIRTIO_BLK_T_IN;
                     long moved = 0;
                     for (int i = 1; i < segments.size() - 1; i++) {
                         Segment segment = segments.get(i);
-                        if (segment.write != writing || segment.length == 0) {
+                        if (segment.write != deviceWrites || segment.length == 0) {
                             continue;
                         }
-                        moved += transfer(segment, byteOffset + moved, writing);
+                        moved += transfer(segment, byteOffset + moved, deviceWrites);
                     }
                     yield moved > 0 ? VIRTIO_BLK_S_OK : VIRTIO_BLK_S_IOERR;
                 }
