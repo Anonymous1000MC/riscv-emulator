@@ -210,13 +210,19 @@ public final class VirtioBlockDevice extends AbstractVirtioDevice {
                     // selecting on the guest's own direction skipped every payload buffer and
                     // made every read fail with I/O error.
                     boolean deviceWrites = type == VIRTIO_BLK_T_IN;
+                    // transfer() takes the guest's direction: true means the guest is writing and
+                    // the device drains it into the image. These are opposites, so one has to be
+                    // negated on the way in. Passing the device's direction straight through made
+                    // every read copy the guest's uninitialised destination buffer out to the
+                    // image instead of filling it, which silently destroyed the partition table
+                    // and left the guest staring at its own zeroes.
                     long moved = 0;
                     for (int i = 1; i < segments.size() - 1; i++) {
                         Segment segment = segments.get(i);
                         if (segment.write != deviceWrites || segment.length == 0) {
                             continue;
                         }
-                        moved += transfer(segment, byteOffset + moved, deviceWrites);
+                        moved += transfer(segment, byteOffset + moved, !deviceWrites);
                     }
                     yield moved > 0 ? VIRTIO_BLK_S_OK : VIRTIO_BLK_S_IOERR;
                 }
@@ -238,13 +244,19 @@ public final class VirtioBlockDevice extends AbstractVirtioDevice {
         }
     }
 
-    /** Moves one payload segment in or out of the image through a reusable staging array. */
-    private int transfer(Segment segment, long byteOffset, boolean writing) throws IOException {
+    /**
+     * Moves one payload segment through a reusable staging array.
+     *
+     * @param guestWrites true when the guest supplies the data and it goes to the image; false
+     *     when the image supplies it and it goes to the guest. This is the guest's direction, the
+     *     opposite of the way the device moves data.
+     */
+    private int transfer(Segment segment, long byteOffset, boolean guestWrites) throws IOException {
         if (segment.length > scratch.length) {
             scratch = new byte[Math.max(segment.length, scratch.length * 2)];
         }
         int length = Math.min(segment.length, scratch.length);
-        if (writing) {
+        if (guestWrites) {
             bus.dmaRead(segment.address, scratch, 0, length);
             return disk.write(byteOffset, ByteBuffer.wrap(scratch, 0, length));
         }
