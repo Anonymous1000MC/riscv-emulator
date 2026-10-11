@@ -38,11 +38,9 @@ if true; then
     cat > "$WORK/root/etc/inittab" <<'INITTAB'
 ::sysinit:/bin/mount -t proc proc /proc
 ::sysinit:/bin/mount -t sysfs sysfs /sys
-::sysinit:/bin/mount -t devtmpfs devtmpfs /dev
 ::sysinit:/bin/mount -t tmpfs tmpfs /tmp
 ::sysinit:/bin/mount -o remount,rw /
-::wait:/etc/init.d/rcS
-ttyS0::respawn:/bin/sh
+ttyS0::respawn:/sbin/getty -L 115200 ttyS0 vt100
 ::ctrlaltdel:/sbin/reboot
 ::shutdown:/bin/umount -a -r
 INITTAB
