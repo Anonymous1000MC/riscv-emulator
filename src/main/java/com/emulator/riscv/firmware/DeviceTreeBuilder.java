@@ -185,6 +185,11 @@ public final class DeviceTreeBuilder {
 
         // ---- soc ----------------------------------------------------------------------------
         dt.beginNode("soc");
+        // Without this the node is not a bus, and the kernel never registers anything under it as
+        // a platform device. The console still appeared because earlycon finds the UART by
+        // walking the tree, but virtio-mmio was never probed: the guest got no block device at
+        // all and could not mount a root filesystem.
+        dt.propertyString("compatible", "simple-bus");
         dt.propertyU32("#address-cells", 2);
         dt.propertyU32("#size-cells", 2);
         dt.propertyEmpty("ranges");

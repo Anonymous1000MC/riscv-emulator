@@ -126,6 +126,11 @@ public final class VirtioMmioTransport implements Device {
 
     @Override
     public int read(int size, long pa) {
+        return readRaw(size, pa);
+    }
+
+
+    private int readRaw(int size, long pa) {
         long offset = pa - base;
         if (offset >= CONFIG_BASE) {
             int at = (int) (offset - CONFIG_BASE);
@@ -165,6 +170,10 @@ public final class VirtioMmioTransport implements Device {
 
     @Override
     public void write(int size, long pa, int value) {
+        writeRaw(size, pa, value);
+    }
+
+    private void writeRaw(int size, long pa, int value) {
         long offset = pa - base;
         if (offset >= CONFIG_BASE) {
             int at = (int) (offset - CONFIG_BASE);

@@ -52,7 +52,17 @@ public final class MemoryMap {
     public static final long VIRTIO_BASE = 0x1000_1000L;
     public static final long VIRTIO_STRIDE = 0x1000;
     public static final int VIRTIO_IRQ_BASE = 1;
-    public static final int VIRTIO_SLOT_COUNT = 8;
+    /**
+     * Number of virtio-mmio transports the machine actually instantiates, and therefore the
+     * number of {@code virtio_mmio} nodes the device tree may advertise.
+     *
+     * <p>These have to agree. Advertising a slot that nothing is mapped behind sends the kernel
+     * into a load access fault when it probes that address, and an access fault is not delegated
+     * to S-mode, so it escalates to M-mode and stops the boot outright.
+     *
+     * <p>Keep in step with the transports registered in {@code RiscVEngine.mapDevices()}.
+     */
+    public static final int VIRTIO_SLOT_COUNT = 4;
 
     /** Block device slot. */
     public static final long VIRTIO_BLK_BASE = VIRTIO_BASE;
