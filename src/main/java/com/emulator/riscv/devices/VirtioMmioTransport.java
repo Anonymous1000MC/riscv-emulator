@@ -53,6 +53,16 @@ public final class VirtioMmioTransport implements Device {
     private static final int QUEUE_USED_HI = 0x0A4;
     private static final int CONFIG_BASE = 0x100;
 
+    // Shared memory region registers. The transport owns these, not the device model: a driver
+    // asks for a region by id and the transport answers with its length.
+    private static final int SHM_SEL = 0x0ac;
+    private static final int SHM_LEN_LOW = 0x0b0;
+    private static final int SHM_LEN_HIGH = 0x0b4;
+    private static final int SHM_BASE_LOW = 0x0b8;
+    private static final int SHM_BASE_HIGH = 0x0bc;
+
+    private int sharedMemorySel;
+
     public static final int STATUS_ACKNOWLEDGE = 1;
     public static final int STATUS_DRIVER = 2;
     public static final int STATUS_DRIVER_OK = 4;
@@ -164,6 +174,12 @@ public final class VirtioMmioTransport implements Device {
             case QUEUE_AVAIL_HI -> (int) (queueAvail[queueSel] >>> 32);
             case QUEUE_USED_LO -> (int) queueUsed[queueSel];
             case QUEUE_USED_HI -> (int) (queueUsed[queueSel] >>> 32);
+            // This machine has no shared memory region to hand out. The spec says a region that
+            // does not exist reads back an all-ones length, and the driver uses exactly that to
+            // decide the region is absent. Returning zero instead reads as a region that exists
+            // with length zero, which makes virtio-gpu try to reserve address 0 and fail the
+            // probe with EBUSY.
+            case SHM_LEN_LOW, SHM_LEN_HIGH, SHM_BASE_LOW, SHM_BASE_HIGH -> -1;
             default -> 0;
         };
     }

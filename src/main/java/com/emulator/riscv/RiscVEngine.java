@@ -134,7 +134,7 @@ public final class RiscVEngine implements AutoCloseable {
         this.uart = new Uart16550Device(plic, MemoryMap.UART_IRQ);
         this.rtc = new RtcDevice(plic, MemoryMap.RTC_IRQ);
         this.testFinisher = new SiFiveTestDevice();
-        this.framebuffer = new FramebufferDevice(memory.arena(), fbBase, MemoryMap.RAM_BASE,
+        this.framebuffer = new FramebufferDevice(bus, memory.arena(), fbBase, MemoryMap.RAM_BASE,
                 config.screenWidth(), config.screenHeight(), plic, MemoryMap.VIRTIO_IRQ_BASE + 1);
 
         this.diskImage = openDisk(config.rootfsImage(), ramBytes / 2);
