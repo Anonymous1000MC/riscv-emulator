@@ -289,7 +289,6 @@ public final class RiscVEngine implements AutoCloseable {
             // the Sstc extension: Linux's timer handler re-arms through this call and relies on
             // it to drop STIP, so without it the interrupt is taken again immediately.
             csrs.clearMipBits(1L << 5);
-            lastMtip[0] = false;
         }
         if (System.getenv("SBI_ECALL") != null && ecallN[0] <= 20) {
             System.out.printf("        -> mepc=0x%x a0=0x%x a1=0x%x%n",
@@ -364,24 +363,28 @@ public final class RiscVEngine implements AutoCloseable {
      * forward it when M-mode cannot consume it, so an M-mode guest that keeps {@code MIE} set still
      * sees the real MTIP.
      */
-    private final boolean[] lastMtip = new boolean[1];
 
     private void bridgeTimerToSupervisor() {
-        long mip = csr.rawRead(CsrFile.MIP);
-        boolean mtip = (mip & (1L << 7)) != 0;
-        boolean mie = (csr.rawRead(CsrFile.MSTATUS) & (1L << CsrFile.MSTATUS_MIE)) != 0;
+        boolean mtip = (csr.rawRead(CsrFile.MIP) & (1L << 7)) != 0;
         boolean delegatedToSupervisor = ((csr.mideleg() >>> 5) & 1) != 0;
-        if (mie || !delegatedToSupervisor) {
-            lastMtip[0] = mtip;
+        if (!delegatedToSupervisor || cpu.privilege() == com.emulator.riscv.mmu.MMU.PRIV_M) {
             return;
         }
-        // Rising edge only. Recomputing STIP from MTIP on every visit meant it stayed set after
-        // the interrupt was taken, so the handler was re-entered on the first instruction after
-        // mret - a livelock with the PC pinned just past the SBI ecall.
-        if (mtip && !lastMtip[0]) {
+        // Forwarded by level, not on a rising edge. From below M-mode the timer is only reachable
+        // by trapping to M-mode, and with no machine handler installed that leads nowhere, so
+        // the interrupt has to be presented to the supervisor as STIP.
+        //
+        // Gating this on MIE was wrong: MIE is meaningless in S-mode but the kernel leaves it
+        // set, so the gate read as "M-mode will take this" and STIP was never asserted at all.
+        // The guest then sat waiting for a tick that could not arrive.
+        //
+        // Level forwarding is what stops this being a livelock. STIP stays asserted until the
+        // guest re-arms, and re-arming through set_timer clears it, so each tick is delivered
+        // exactly once. An edge trigger was wrong the other way: MTIP is a level that stays high
+        // until mtimecmp moves forward, so once it was seen no further tick would ever fire.
+        if (mtip) {
             csr.setMipBits(1L << 5);
         }
-        lastMtip[0] = mtip;
     }
 
     private void sampleIps() {
