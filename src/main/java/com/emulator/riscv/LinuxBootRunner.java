@@ -81,8 +81,16 @@ public final class LinuxBootRunner implements AutoCloseable {
      * <p>It sits between the device tree and the kernel load address, so nothing else can collide
      * with it.
      */
-    /** How long a running guest may go without printing before it is declared wedged. */
-    private static final long WEDGE_SILENCE_NANOS = 3_000_000_000L;
+    /**
+     * How long a running guest may go without printing before it is declared wedged.
+     *
+     * <p>This has to outlast the kernel's own long silent stretches. Between the last early
+     * console message and the attempt to mount root, Linux spends roughly ten seconds with no
+     * output at all - running the jitterentropy health test and benchmarking the RAID6
+     * syndrome algorithms - while still making steady progress. A three second window aborted
+     * those boots and reported them as wedged long before the mount was ever attempted.
+     */
+    private static final long WEDGE_SILENCE_NANOS = 30_000_000_000L;
 
     private static final long TRAP_STUB = MemoryMap.RAM_BASE + 0x0010_0000L;
 

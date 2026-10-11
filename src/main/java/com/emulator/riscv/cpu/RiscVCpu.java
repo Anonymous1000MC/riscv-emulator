@@ -389,6 +389,7 @@ public final class RiscVCpu {
     // ---- trap entry and exit ----------------------------------------------------------------------
 
     /** Takes the most significant enabled-and-pending interrupt, if any. */
+
     private boolean takePendingInterrupt() {
         long active = csr.pendingAndEnabled();
         if (active == 0) {

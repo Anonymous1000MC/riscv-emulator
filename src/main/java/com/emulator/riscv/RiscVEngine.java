@@ -329,9 +329,14 @@ public final class RiscVEngine implements AutoCloseable {
                 cpu.enterTrap(trap.cause, trap.value);
                 executed++;
             }
-            // Never blow a slice wide open just because instructions are cheap: yield so the host
-            // thread stays responsive even when the guest is in a tight loop.
-            if ((executed & 0xFFFF) == 0 && System.nanoTime() - start > sliceNanos) {
+            // The guest timer has to keep running while instructions execute. mtime is derived
+            // from the host clock and is only ever sampled when the devices are ticked, so
+            // ticking them once at the end of a slice left mtime frozen for the whole slice: a
+            // guest waiting on its clockevent saw MTIP assert at most once per slice, and jiffies
+            // advanced one tick per slice instead of one per period. A guest that spins on the
+            // timer - Linux's own loops do - then made no visible progress at all.
+            tickTimer();
+            if (System.nanoTime() - start > sliceNanos) {
                 break;
             }
         }
@@ -339,6 +344,14 @@ public final class RiscVEngine implements AutoCloseable {
         retired += executed;
         sampleIps();
         return executed;
+    }
+
+    /** Ticks only the timer, which is cheap enough to sample while instructions execute. */
+
+
+    private void tickTimer() {
+        clint.tick();
+        bridgeTimerToSupervisor();
     }
 
     private void tickDevices() {
