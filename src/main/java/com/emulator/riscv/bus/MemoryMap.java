@@ -100,12 +100,19 @@ public final class MemoryMap {
 
     /**
      * The framebuffer lives inside the main RAM arena so that virtio-framebuffer DMA from the
-     * guest is an ordinary physical write. It is carved out of the top of RAM and is routed
-     * through {@link com.emulator.riscv.devices.FramebufferDevice} so dirty tiles can be
-     * tracked without adding work to the ordinary RAM path.
+     * guest is an ordinary physical write. It is routed through
+     * {@link com.emulator.riscv.devices.FramebufferDevice} so dirty tiles can be tracked without
+     * adding work to the ordinary RAM path.
+     *
+     * <p>It is carved out of RAM but deliberately stops two megabytes short of the top. That top
+     * window holds the device tree at its bottom and the boot stack above it, and a no-map
+     * reservation reaching all the way to the end of RAM pushes Linux's memblock allocator into
+     * handing the unflattened device tree an address it then walks off the end of. With a
+     * 16 KiB framebuffer the reservation happened to stay clear of whatever the allocator was
+     * doing, which is why this only ever showed up at real screen sizes.
      */
     public static long framebufferBase(long ramBase, long ramSize, long fbSize) {
-        long end = ramBase + ramSize;
+        long end = ramBase + ramSize - 0x0020_0000L;
         long base = (end - fbSize) & ~0xFFFL;
         return base;
     }
