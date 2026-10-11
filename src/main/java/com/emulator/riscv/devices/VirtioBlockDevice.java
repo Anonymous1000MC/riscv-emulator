@@ -131,7 +131,9 @@ public final class VirtioBlockDevice extends AbstractVirtioDevice {
         // end. The used ring has to name the descriptor the driver actually handed us: advancing
         // the index with no matching element leaves the driver waiting on a completion naming a
         // descriptor it never submitted, and it never issues another request.
+        boolean anyServed = false;
         while (lastAvailable != available) {
+            anyServed = true;
             int head = VirtioMmioTransport.availEntry(queue, bus, lastAvailable & (size - 1));
             Served served = serveRequest(head);
             lastAvailable = (lastAvailable + 1) & 0xFFFF;
@@ -141,7 +143,11 @@ public final class VirtioBlockDevice extends AbstractVirtioDevice {
             VirtioMmioTransport.completeUsed(queue, bus, (used - 1) & (size - 1), used, head,
                     served.written());
         }
-        if (used != VirtioMmioTransport.usedIndex(queue, bus)) {
+        // Raise only when something was actually completed. Reading the used index back and
+        // comparing it to the one just written can never differ, so the guest was never told a
+        // transfer had finished: it sat waiting for a completion that had already been delivered
+        // and the block layer stalled after the first request.
+        if (anyServed) {
             raiseInterrupt();
         }
     }
