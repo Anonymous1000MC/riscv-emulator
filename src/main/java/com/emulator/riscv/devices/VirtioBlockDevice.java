@@ -130,7 +130,7 @@ public final class VirtioBlockDevice extends AbstractVirtioDevice {
         // One completion per descriptor, published as each is served rather than batched at the
         // end. The used ring has to name the descriptor the driver actually handed us: advancing
         // the index with no matching element leaves the driver waiting on a completion naming a
-        // descriptor it never submitted, and it never issues another request.
+        // descriptor it never submitted.
         boolean anyServed = false;
         while (lastAvailable != available) {
             anyServed = true;
