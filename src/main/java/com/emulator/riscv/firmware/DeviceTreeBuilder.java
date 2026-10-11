@@ -12,7 +12,13 @@ import com.emulator.riscv.cpu.CsrFile;
  * exactly where it expects them. Address cells are two everywhere in the root and {@code /soc},
  * matching the real board.
  */
+/** RISC-V supervisor/machine external interrupt numbers on the per-hart interruptor. */
 public final class DeviceTreeBuilder {
+
+    /** Machine external interrupt on the per-hart interruptor. */
+    private static final int RV_IRQ_M_EXT = 11;
+    /** Supervisor external interrupt on the per-hart interruptor. */
+    private static final int RV_IRQ_S_EXT = 9;
 
     private final long ramBase;
     private final long ramSize;
@@ -116,7 +122,6 @@ public final class DeviceTreeBuilder {
         dt.beginNode("reserved-memory");
         dt.propertyU32("#address-cells", 2);
         dt.propertyU32("#size-cells", 2);
-        dt.propertyU32("#alloc-ranges-size", 0);
 
         // The framebuffer is ordinary RAM as far as virtio is concerned, but nothing else should
         // be allowed to hand it to the page allocator.
@@ -232,16 +237,23 @@ public final class DeviceTreeBuilder {
         dt.propertyEmpty("interrupt-controller");
         dt.propertyU32("#interrupt-cells", 1);
         dt.propertyU32("#address-cells", 0);
-        int[] plicTargets = new int[hartCount * 2];
+        // One context pair per hart: a machine context and a supervisor context, each naming the
+        // hart's own CPU interruptor and the external interrupt it is wired to. The kernel
+        // derives its context count from the length of this property, so a single entry per
+        // hart leaves the supervisor context unset up entirely and no device interrupt can
+        // ever reach the guest.
+        int[] plicTargets = new int[hartCount * 4];
         for (int i = 0; i < hartCount; i++) {
-            plicTargets[i * 2] = phandleCpuIntc[i];
-            plicTargets[i * 2 + 1] = 7 + i;
+            plicTargets[i * 4] = phandleCpuIntc[i];
+            plicTargets[i * 4 + 1] = RV_IRQ_M_EXT;
+            plicTargets[i * 4 + 2] = phandleCpuIntc[i];
+            plicTargets[i * 4 + 3] = RV_IRQ_S_EXT;
         }
         dt.property("interrupts-extended", plicTargets);
-        // riscv,ndev is the number of interrupt contexts, not the number of sources: one
-        // machine and one supervisor context per hart. The source count is riscv,nr-irqs.
-        dt.propertyU32("riscv,ndev", hartCount * 2);
-        dt.propertyU32("riscv,nr-irqs", 96);
+        // riscv,ndev is the number of interrupt sources. The number of contexts is instead
+        // the number of entries in interrupts-extended below: one machine and one supervisor
+        // context per hart.
+        dt.propertyU32("riscv,ndev", 96);
         dt.propertyU32("phandle", phandlePlic);
         dt.endNode();
 

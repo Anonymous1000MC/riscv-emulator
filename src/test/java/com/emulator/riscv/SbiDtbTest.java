@@ -209,11 +209,7 @@ class SbiDtbTest {
         assertEquals(QEMU_VIRT_PLIC_BASE, plic.reg()[0], "PLIC base");
         assertEquals(MemoryMap.PLIC_BASE, plic.reg()[0],
                 "the tree and the bus agree on the PLIC base");
-        // riscv,ndev counts contexts (one machine and one supervisor per hart); riscv,nr-irqs
-        // counts sources. These used to be confused for one another, which left the kernel
-        // setting up no supervisor context at all.
-        assertEquals(2, plic.u32("riscv,ndev"), "one machine and one supervisor context");
-        assertEquals(96, plic.u32("riscv,nr-irqs"), "the PLIC exposes 96 sources");
+        assertEquals(96, plic.u32("riscv,ndev"), "the PLIC exposes 96 sources");
 
         Fdt.Node uart = fdt.node("soc/serial@" + Long.toHexString(QEMU_VIRT_UART_BASE));
         assertNotNull(uart, "the console node lives under /soc");

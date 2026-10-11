@@ -135,18 +135,9 @@ public final class VirtioBlockDevice extends AbstractVirtioDevice {
             used++;
             served = true;
         }
-        if (System.getenv("VDBG") != null) {
-            System.out.printf("VDBG notify avail=%d used=%d last=%d served=%b present=%b qnull=%b%n",
-                    available, used, lastAvailable, served, present, queue == null);
-        }
         if (served) {
             VirtioMmioTransport.publishUsed(queue, bus, used);
-            try {
-                raiseInterrupt();
-            } catch (Throwable t) {
-                System.out.println("VDBG raiseInterrupt threw: " + t);
-                t.printStackTrace();
-            }
+            raiseInterrupt();
         }
     }
 

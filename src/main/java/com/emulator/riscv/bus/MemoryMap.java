@@ -32,10 +32,6 @@ public final class MemoryMap {
     public static final long PLIC_PRIORITY_BASE = 0x0000_0000L;
     public static final long PLIC_PENDING_BASE = 0x0000_1000L;
     public static final long PLIC_ENABLE_BASE = 0x0000_2000L;
-    /** Offset of a hart's supervisor context within its context block. */
-    public static final long PLIC_CONTEXT_S = 0x0000_1000L;
-    /** Offset of the supervisor enable bitmap within a hart's context block. */
-    public static final long PLIC_CONTEXT_S_ENABLE = 0x0000_3000L;
     public static final long PLIC_ENABLE_STRIDE = 0x80;
     /**
      * Offset of the first context's registers within the PLIC window, not an absolute address.
@@ -50,14 +46,12 @@ public final class MemoryMap {
      */
     public static final long PLIC_CONTEXT_BASE = 0x0020_0000L;
     /**
-     * Bytes a hart occupies in the context region.
+     * Bytes per context in the threshold/claim region.
      *
-     * <p>The SiFive layout gives each hart a machine context (threshold and claim), a supervisor
-     * context one page on, then the machine and supervisor enable bitmaps. Assuming a single page
-     * per hart instead makes the supervisor context read as the next hart's machine context, which
-     * is dropped as out of range - so the guest enabled no source and received no interrupt.
+     * <p>These regions are indexed by context, not by hart: a hart owns a machine context and a
+     * supervisor context, and they are consecutive.
      */
-    public static final long PLIC_CONTEXT_STRIDE = 0x4000;
+    public static final long PLIC_CONTEXT_STRIDE = 0x1000;
     public static final long PLIC_CONTEXT_THRESHOLD = 0x00;
     public static final long PLIC_CONTEXT_CLAIM = 0x04;
 
