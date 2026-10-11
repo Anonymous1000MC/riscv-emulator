@@ -54,6 +54,19 @@ public final class Uart16550Device implements Device {
 
     private int ier;
     private int iir = IIR_NO_INTERRUPT;
+
+    /**
+     * Latched interrupt conditions.
+     *
+     * <p>The transmitter-empty, receiver-status and modem-status interrupts are edge triggered on
+     * real hardware: the line is raised when the condition changes and the guest clears it by
+     * reading the IIR. Deriving them from IER alone instead leaves them permanently asserted
+     * once the guest enables console interrupts, and the controller then re-enters the serial
+     * handler for ever without ever letting the boot make progress.
+     */
+    private boolean transmitterEmptyLatched;
+    private boolean receiverStatusLatched;
+    private boolean modemStatusLatched;
     private int lcr;
     private int mcr;
     private int scr;
@@ -108,7 +121,22 @@ public final class Uart16550Device implements Device {
         }
         String text = transmit.toString();
         transmit.setLength(0);
+        raiseTransmitterEmpty();
         return text;
+    }
+
+    /**
+     * Raises the transmitter-empty interrupt, but only on the transition out of busy.
+     *
+     * <p>A 16550 does not re-raise this every time the holding register happens to be found
+     * empty. It raises it when the transmitter empties and stays quiet until the guest writes
+     * another character, so latching it on every poll would leave the line permanently up.
+     */
+    private void raiseTransmitterEmpty() {
+        if (!transmitterEmptyLatched) {
+            transmitterEmptyLatched = true;
+            refreshInterrupt();
+        }
     }
 
     private boolean divisorLatched() {
@@ -134,6 +162,16 @@ public final class Uart16550Device implements Device {
                     return 0;
                 }
                 int status = interruptPending() ? currentIir() : IIR_NO_INTERRUPT;
+                // Reading the IIR acknowledges the interrupt it reports, exactly as a 16550
+                // does. Without this the latch would never clear and the line would stay up.
+                if (status == IIR_TRANSMITTER_EMPTY) {
+                    transmitterEmptyLatched = false;
+                } else if (status == IIR_RECEIVER_STATUS) {
+                    receiverStatusLatched = false;
+                } else if (status == IIR_MODEM_STATUS) {
+                    modemStatusLatched = false;
+                }
+                refreshInterrupt();
                 return (status & 0x0F) | 0xC0;
             }
             case REG_LCR:
@@ -202,6 +240,9 @@ public final class Uart16550Device implements Device {
 
     private void emit(int value) {
         transmit.append((char) value);
+        // The holding register is now busy, so the line drops; it is re-raised by the drain.
+        transmitterEmptyLatched = false;
+        refreshInterrupt();
         if (transmit.length() >= 256) {
             flush();
         }
@@ -220,6 +261,7 @@ public final class Uart16550Device implements Device {
             outputSink.accept(batch.charAt(i));
         }
         transmitDrain.run();
+        raiseTransmitterEmpty();
     }
 
     private boolean dataReady() {
@@ -230,19 +272,19 @@ public final class Uart16550Device implements Device {
 
     private boolean interruptPending() {
         return ((ier & IER_RECEIVED_DATA) != 0 && dataReady())
-                || (ier & IER_TRANSMITTER_EMPTY) != 0
-                || (ier & IER_RECEIVER_STATUS) != 0
-                || (ier & IER_MODERATOR_STATUS) != 0;
+                || ((ier & IER_TRANSMITTER_EMPTY) != 0 && transmitterEmptyLatched)
+                || ((ier & IER_RECEIVER_STATUS) != 0 && receiverStatusLatched)
+                || ((ier & IER_MODERATOR_STATUS) != 0 && modemStatusLatched);
     }
 
     private int currentIir() {
         if ((ier & IER_RECEIVED_DATA) != 0 && dataReady()) {
             return IIR_RECEIVED_DATA;
         }
-        if ((ier & IER_TRANSMITTER_EMPTY) != 0) {
+        if ((ier & IER_TRANSMITTER_EMPTY) != 0 && transmitterEmptyLatched) {
             return IIR_TRANSMITTER_EMPTY;
         }
-        if ((ier & IER_RECEIVER_STATUS) != 0) {
+        if ((ier & IER_RECEIVER_STATUS) != 0 && receiverStatusLatched) {
             return IIR_RECEIVER_STATUS;
         }
         return IIR_MODEM_STATUS;
