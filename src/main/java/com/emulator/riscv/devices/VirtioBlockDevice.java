@@ -126,22 +126,33 @@ public final class VirtioBlockDevice extends AbstractVirtioDevice {
         int size = queue.size();
         int available = VirtioMmioTransport.availIndex(queue, bus);
         int used = VirtioMmioTransport.usedIndex(queue, bus);
-        boolean served = false;
 
+        // One completion per descriptor, published as each is served rather than batched at the
+        // end. The used ring has to name the descriptor the driver actually handed us: advancing
+        // the index with no matching element leaves the driver waiting on a completion naming a
+        // descriptor it never submitted, and it never issues another request.
         while (lastAvailable != available) {
             int head = VirtioMmioTransport.availEntry(queue, bus, lastAvailable & (size - 1));
-            serveRequest(head);
+            Served served = serveRequest(head);
             lastAvailable = (lastAvailable + 1) & 0xFFFF;
             used++;
-            served = true;
+            // The element belongs at the slot the driver is about to read, which is the one
+            // before the index being published: it consumes used->ring[last_used] and then
+            // advances last_used itself. Writing it at used % size puts the completion one slot
+            // ahead of where the driver looks, which is a different descriptor.
+            VirtioMmioTransport.completeUsed(queue, bus, (used - 1) & (size - 1), head,
+                    served.written());
         }
-        if (served) {
-            VirtioMmioTransport.publishUsed(queue, bus, used);
+        if (used != VirtioMmioTransport.usedIndex(queue, bus)) {
             raiseInterrupt();
         }
     }
 
-    private int serveRequest(int head) {
+    /** What one request did, so the used ring can report the right length. */
+    private record Served(int written) {
+    }
+
+    private Served serveRequest(int head) {
         List<Segment> segments = new ArrayList<>(4);
         int index = head;
         for (int guard = 0; guard < 64; guard++) {
@@ -160,14 +171,16 @@ public final class VirtioBlockDevice extends AbstractVirtioDevice {
 
         ioRequests++;
         int status = perform(segments);
+        int written = 0;
         if (status != VIRTIO_BLK_S_OK) {
             ioErrors++;
         }
         Segment statusSegment = segments.get(segments.size() - 1);
         if (statusSegment.write && statusSegment.length > 0) {
             bus.write8Phy(statusSegment.address, (byte) status);
+            written = 1;
         }
-        return head;
+        return new Served(written);
     }
 
     private int perform(List<Segment> segments) {

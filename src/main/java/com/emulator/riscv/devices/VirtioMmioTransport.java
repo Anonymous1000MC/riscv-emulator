@@ -345,10 +345,24 @@ public final class VirtioMmioTransport implements Device {
         return bus.read16Phy(queue.usedAddress() + 2) & 0xFFFF;
     }
 
+    /**
+     * Records one completed descriptor and publishes the new index.
+     *
+     * <p>Both halves are required. Advancing the index without writing the element leaves the
+     * driver reading a zeroed entry: it sees a completion for descriptor zero that never
+     * happened, with a length of zero, and the request it was waiting on never completes. The
+     * input device wrote the element and published separately; the block device only published.
+     */
     public static void writeUsed(VirtioDevice.Virtqueue queue, Bus bus, int slot, int id, int length) {
         long at = queue.usedAddress() + 4 + (long) (slot & 0x7FFF) * 8;
         bus.write32Phy(at, id);
         bus.write32Phy(at + 4, length);
+    }
+
+    /** Publishes a completion: the ring element plus the index that makes it visible. */
+    public static void completeUsed(VirtioDevice.Virtqueue queue, Bus bus, int slot, int id, int length) {
+        writeUsed(queue, bus, slot, id, length);
+        bus.write16Phy(queue.usedAddress() + 2, (short) (slot & 0xFFFF));
     }
 
     public static void publishUsed(VirtioDevice.Virtqueue queue, Bus bus, int index) {
