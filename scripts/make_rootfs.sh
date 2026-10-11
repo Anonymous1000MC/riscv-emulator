@@ -30,6 +30,24 @@ tar xzf "$WORK/alpine.tar.gz" -C "$WORK/root"
 # takes to be a whole disk, which leaves the kernel with a partition covering the
 # entire image and nothing to mount; keeping the filesystem in its own file and
 # dropping it at a partition offset avoids that entirely.
+# Alpine's minirootfs ships an inittab that hands control to /sbin/openrc, which the
+# minirootfs does not contain, so init exits with "can't run '/sbin/openrc'". Replacing
+# it with a busybox inittab that mounts the pseudo filesystems and respawns a shell on
+# the serial console is what makes the image reach a prompt unattended.
+if true; then
+    cat > "$WORK/root/etc/inittab" <<'INITTAB'
+::sysinit:/bin/mount -t proc proc /proc
+::sysinit:/bin/mount -t sysfs sysfs /sys
+::sysinit:/bin/mount -t devtmpfs devtmpfs /dev
+::sysinit:/bin/mount -t tmpfs tmpfs /tmp
+::sysinit:/bin/mount -o remount,rw /
+::wait:/etc/init.d/rcS
+ttyS0::respawn:/bin/sh
+::ctrlaltdel:/sbin/reboot
+::shutdown:/bin/umount -a -r
+INITTAB
+fi
+
 echo "building filesystem"
 truncate -s 1000M "$WORK/fs.img"
 mkfs.ext4 -q -F -d "$WORK/root" -L alpine-root "$WORK/fs.img"
