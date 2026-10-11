@@ -290,9 +290,10 @@ class SbiDtbTest {
 
         assertEquals("rv64imafdctr", cpu.string("riscv,isa"),
                 "the kernel derives its ISA expectations from this string");
-        assertFalse(cpu.properties.containsKey("riscv,isa-base"),
-                "isa-base is omitted: Linux cross-checks it against its own base and rejects a"
-                        + " base advertising extensions it did not compile for");
+        // Linux reads riscv,isa-base first and only falls back to parsing riscv,isa when it is
+        // absent. The modern path is what derives elf_hwcap, so it has to be present.
+        assertEquals("rv64i", cpu.string("riscv,isa-base"),
+                "isa-base names the mandatory base so the kernel takes the modern ISA path");
 
         List<String> extensions = cpu.strings("riscv,isa-extensions");
         assertTrue(extensions.contains("s"), "s is advertised as an extension");

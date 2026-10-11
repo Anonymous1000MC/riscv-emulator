@@ -179,6 +179,12 @@ public final class DeviceTreeBuilder {
             // "riscv,isa-extensions" instead made the kernel compare "rv64imafdc" against an
             // extension list that did not contain it and BUG out at smpboot.c with "CPU with
             // hartid=0 does not support ima". So advertise exactly what misa says, in order.
+            // Prefer the modern interface. Linux reads riscv,isa-base first, and only falls
+            // back to parsing the full riscv,isa string when it is absent (and only with
+            // CONFIG_RISCV_ISA_FALLBACK). On the old path it never derives elf_hwcap, so
+            // has_fpu() is false, start_thread never sets SR_FS_INITIAL, and the first
+            // user-space floating point store traps as an illegal instruction.
+            dt.propertyString("riscv,isa-base", "rv64i");
             dt.propertyString("riscv,isa", isaString());
             // The kernel builds its extension set from riscv,isa-extensions, and prints
             // "riscv: base ISA extensions" from it. Listing only the single-letter priv modes

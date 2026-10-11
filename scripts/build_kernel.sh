@@ -91,7 +91,7 @@ if [[ ! -f .config ]]; then
     make ARCH=riscv CROSS_COMPILE="${CROSS_COMPILE}" defconfig
 fi
 
-say "applying the RV64IMACU contract"
+say "applying the RV64IMAFDCU contract"
 
 config() {
     ./scripts/config --file .config "$@"
@@ -101,7 +101,11 @@ config --enable  CONFIG_ARCH_RV64I
 config --enable  CONFIG_RISCV_ISA_C
 config --enable  CONFIG_RISCV_ISA_M
 config --disable CONFIG_RISCV_ISA_V
-config --disable CONFIG_FPU
+# The emulator decodes the whole OP-FP opcode, so the hardware genuinely has single- and
+# double-precision floating point. Leaving CONFIG_FPU off made the kernel believe it had no FPU:
+# start_thread then never set SR_FS_INITIAL, mstatus.FS stayed Off, and the first C.FSD in
+# userspace - busybox reaches one almost immediately - trapped as an illegal instruction.
+config --enable  CONFIG_FPU
 
 config --enable  CONFIG_SERIAL_8250
 config --enable  CONFIG_SERIAL_8250_CONSOLE
@@ -182,12 +186,12 @@ check_exists_enabled() {
     check_enable "${symbol}"
 }
 
-# The emulator implements exactly RV64IMACU.
+# The emulator implements exactly RV64IMAFDCU.
 check_exists_enabled CONFIG_ARCH_RV64I    ""
 check_exists_enabled CONFIG_RISCV_ISA_M   "M is mandatory for rv64 and always built in"
 check_enable       CONFIG_RISCV_ISA_C
 check_disable      CONFIG_RISCV_ISA_V
-check_disable      CONFIG_FPU
+check_enable       CONFIG_FPU
 
 # The device tree the emulator hands over describes an ns16550a and virtio-mmio devices.
 check_enable CONFIG_SERIAL_8250
