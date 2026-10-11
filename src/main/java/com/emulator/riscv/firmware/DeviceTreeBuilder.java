@@ -238,7 +238,10 @@ public final class DeviceTreeBuilder {
             plicTargets[i * 2 + 1] = 7 + i;
         }
         dt.property("interrupts-extended", plicTargets);
-        dt.propertyU32("riscv,ndev", 96);
+        // riscv,ndev is the number of interrupt contexts, not the number of sources: one
+        // machine and one supervisor context per hart. The source count is riscv,nr-irqs.
+        dt.propertyU32("riscv,ndev", hartCount * 2);
+        dt.propertyU32("riscv,nr-irqs", 96);
         dt.propertyU32("phandle", phandlePlic);
         dt.endNode();
 

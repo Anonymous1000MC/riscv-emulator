@@ -114,14 +114,18 @@ public final class PlicDevice implements Device, InterruptSource {
             }
             long offset = (rel - MemoryMap.PLIC_CONTEXT_BASE)
                     % MemoryMap.PLIC_CONTEXT_STRIDE;
-            if (offset == MemoryMap.PLIC_CONTEXT_THRESHOLD) {
+            // The guest runs in supervisor mode, so its context is the second of the two a hart
+            // owns. Reading the machine context instead would report a threshold and claim the
+            // supervisor never uses.
+            if (offset == MemoryMap.PLIC_CONTEXT_S + MemoryMap.PLIC_CONTEXT_THRESHOLD) {
                 return threshold[hart];
             }
-            if (offset == MemoryMap.PLIC_CONTEXT_CLAIM) {
+            if (offset == MemoryMap.PLIC_CONTEXT_S + MemoryMap.PLIC_CONTEXT_CLAIM) {
                 return claim(hart);
             }
-            if (offset >= MemoryMap.PLIC_ENABLE_BASE && offset < MemoryMap.PLIC_ENABLE_BASE + 0x80) {
-                return enable[hart][(int) ((offset - MemoryMap.PLIC_ENABLE_BASE) >>> 2)];
+            if (offset >= MemoryMap.PLIC_CONTEXT_S_ENABLE
+                    && offset < MemoryMap.PLIC_CONTEXT_S_ENABLE + 0x80) {
+                return enable[hart][(int) ((offset - MemoryMap.PLIC_CONTEXT_S_ENABLE) >>> 2)];
             }
         }
         return 0;
@@ -143,17 +147,18 @@ public final class PlicDevice implements Device, InterruptSource {
                 return;
             }
             long offset = (rel - MemoryMap.PLIC_CONTEXT_BASE) % MemoryMap.PLIC_CONTEXT_STRIDE;
-            if (offset == MemoryMap.PLIC_CONTEXT_THRESHOLD) {
+            if (offset == MemoryMap.PLIC_CONTEXT_S + MemoryMap.PLIC_CONTEXT_THRESHOLD) {
                 threshold[hart] = value;
                 update(hart);
                 return;
             }
-            if (offset == MemoryMap.PLIC_CONTEXT_CLAIM) {
+            if (offset == MemoryMap.PLIC_CONTEXT_S + MemoryMap.PLIC_CONTEXT_CLAIM) {
                 complete(value);
                 return;
             }
-            if (offset >= MemoryMap.PLIC_ENABLE_BASE && offset < MemoryMap.PLIC_ENABLE_BASE + 0x80) {
-                enable[hart][(int) ((offset - MemoryMap.PLIC_ENABLE_BASE) >>> 2)] = value;
+            if (offset >= MemoryMap.PLIC_CONTEXT_S_ENABLE
+                    && offset < MemoryMap.PLIC_CONTEXT_S_ENABLE + 0x80) {
+                enable[hart][(int) ((offset - MemoryMap.PLIC_CONTEXT_S_ENABLE) >>> 2)] = value;
                 update(hart);
             }
         }

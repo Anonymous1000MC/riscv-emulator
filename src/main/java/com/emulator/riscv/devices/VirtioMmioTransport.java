@@ -226,7 +226,14 @@ public final class VirtioMmioTransport implements Device {
                     | (value & 0xFFFF_FFFFL);
             case QUEUE_USED_HI -> queueUsed[queueSel] = (queueUsed[queueSel] & 0xFFFF_FFFFL)
                     | ((long) value << 32);
-            case QUEUE_NOTIFY -> notifyQueue(value);
+            case QUEUE_NOTIFY -> {
+                if (base == 0x10001000L && System.getenv("VDBG") != null) {
+                    System.out.printf("VDBG notify q=%d num=%d ready=%b drvok=%b%n",
+                            value, queueNum[value & 0xF], queueReady[value & 0xF],
+                            (status & STATUS_DRIVER_OK) != 0);
+                }
+                notifyQueue(value);
+            }
             case INTERRUPT_ACK -> {
                 interruptStatus &= ~value;
                 if (interruptStatus == 0) {
