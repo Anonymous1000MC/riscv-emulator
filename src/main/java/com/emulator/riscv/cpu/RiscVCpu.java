@@ -448,9 +448,14 @@ public final class RiscVCpu {
             status = (status & ~(1L << CsrFile.MSTATUS_SIE))                 // SIE <- 0
                     | (oldSie << CsrFile.MSTATUS_SPIE);                       // SPIE <- SIE
         }
-        // SPP records whether the mode below was supervisor, and MPRV is cleared on return from
-        // M-mode throughout, matching the definitions of both fields.
-        status = privilege < 3 ? status | CsrFile.MSTATUS_SPP_BIT
+        // SPP records the mode a later sret returns to, so it is set only when the mode being
+        // left was supervisor. Testing privilege < 3 covered user mode as well, which recorded
+        // SPP=1 for every trap taken from U-mode. The kernel reads that back through
+        // user_mode() and concluded a fault on a user address had come from kernel code, so it
+        // died in bad_area() with "access to user memory without uaccess routines" instead of
+        // taking the ordinary demand-fault path and mapping the page. Only the first U-mode trap
+        // in the boot ever exercised this, which is why every S-to-S test passed.
+        status = privilege == 1 ? status | CsrFile.MSTATUS_SPP_BIT
                 : status & ~CsrFile.MSTATUS_SPP_BIT;
         csr.setMstatus(status);
 
