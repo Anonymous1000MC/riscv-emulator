@@ -349,6 +349,7 @@ public final class RiscVEngine implements AutoCloseable {
     /** Ticks only the timer, which is cheap enough to sample while instructions execute. */
 
 
+
     private void tickTimer() {
         clint.tick();
         bridgeTimerToSupervisor();
@@ -377,15 +378,9 @@ public final class RiscVEngine implements AutoCloseable {
      * sees the real MTIP.
      */
 
-    private boolean timerLastMtip;
-    private boolean timerStipAsserted;
-
     private void bridgeTimerToSupervisor() {
         boolean mtip = (csr.rawRead(CsrFile.MIP) & (1L << 7)) != 0;
-        boolean stip = (csr.rawRead(CsrFile.MIP) & (1L << 5)) != 0;
         if (((csr.mideleg() >>> 5) & 1) == 0 || cpu.privilege() == MMU.PRIV_M) {
-            timerLastMtip = mtip;
-            timerStipAsserted = false;
             return;
         }
         // From below M-mode the timer is only reachable by trapping to M-mode, and with no machine
@@ -395,24 +390,16 @@ public final class RiscVEngine implements AutoCloseable {
         // Gating on MIE was wrong: MIE is meaningless in S-mode but the kernel leaves it set, so
         // the gate always read as "M-mode will take this" and no tick was ever delivered.
         //
-        // Asserting on the level was wrong the other way. MTIP stays high until mtimecmp moves
-        // forward, so re-asserting STIP on every visit took the interrupt again immediately
-        // after the guest acknowledged it, over and over. Forwarding is now edge triggered, and
-        // the guest's own acknowledge is respected: once it has cleared STIP the bridge stays
-        // quiet until MTIP has genuinely dropped and risen again.
-        if (!mtip) {
-            timerLastMtip = false;
-            timerStipAsserted = false;
-            return;
-        }
-        if (!timerLastMtip) {
-            timerLastMtip = true;
-            timerStipAsserted = true;
+        // This mirrors MTIP as a level rather than asserting once per rising edge. Treating the
+        // guest's acknowledge as permission to stay quiet loses the wakeup in tickless idle: the
+        // hart clears the pending bit before it sleeps, and with nothing left to re-assert it,
+        // the deadline it armed passes with the interrupt never delivered again. Re-arming
+        // through set_timer is what breaks the resulting loop, because that clears STIP and lets
+        // the deadline move.
+        if (mtip) {
             csr.setMipBits(1L << 5);
-            return;
-        }
-        if (timerStipAsserted && !stip) {
-            timerStipAsserted = false;
+        } else {
+            csr.clearMipBits(1L << 5);
         }
     }
 
