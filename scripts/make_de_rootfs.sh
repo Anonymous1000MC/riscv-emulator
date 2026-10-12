@@ -43,9 +43,14 @@ tar xzf "$WORK/mini.tar.gz" -C "$ROOT"
 say "fetching apk-tools-static (runs under qemu-user to install riscv64 packages)"
 # Alpine's apk in the minirootfs is dynamically linked and its musl build trips qemu-user's
 # relocation support. The static build has no loader and no shared libraries to relocate.
-APK_VERSION="$(curl -sfL "${REPO_BASE}/main/riscv64/APKINDEX.tar.gz" | tar xzO APKINDEX 2>/dev/null \
-    | awk '/^P:apk-tools-static$/{found=1} found && /^V:/{print $2; exit}' \
-    | tr -d '\r')"
+# The index is fetched to a file and parsed from there: piping it straight through tar and awk
+# loses the answer, because the awk that finds the version exits early and takes the upstream
+# pipe down with it.
+curl -sfL --retry 3 -o "$WORK/APKINDEX.tar.gz" "${REPO_BASE}/main/riscv64/APKINDEX.tar.gz"
+tar xzf "$WORK/APKINDEX.tar.gz" -C "$WORK" APKINDEX
+# sed rather than awk: awk is not reliably present on every host this runs on.
+APK_VERSION="$(grep -A1 '^P:apk-tools-static$' "$WORK/APKINDEX" \
+    | sed -n 's/^V://p' | head -1 | tr -d '\r')"
 [ -n "$APK_VERSION" ] || { echo "could not determine apk-tools-static version" >&2; exit 1; }
 curl -sfL --retry 3 -o "$WORK/apk-static.apk" \
     "${REPO_BASE}/main/riscv64/apk-tools-static-${APK_VERSION}.apk"
