@@ -1,14 +1,14 @@
-#!/usr/bin/env bash
+# Builds a graphical Alpine image for Theon.
 #
-# Builds a graphical Alpine image: Xorg with the fbdev driver, driven by a guest init that starts
-# it on the framebuffer Theon's virtio-gpu device exposes as /dev/fb0.
+# See DE_STATUS.md for what works, what does not, and why. Two things about this script are worth
+# knowing before changing it, because both fail silently rather than loudly:
 #
-# The image is not a desktop yet. Xorg installs and starts; getting it all the way through display
-# initialisation is blocked on an instruction the emulator does not implement yet. This script
-# exists so that work has somewhere to resume from instead of being rediscovered.
+#   - apk exits non-zero whenever a package trigger fails, and under qemu-user the busybox and
+#     fontconfig triggers always fail because they call unshare. Under set -e that aborts the
+#     build before the image is assembled, which looks exactly like a hang.
+#   - awk is not present on every host this runs on. The apk version is parsed with sed.
 #
-# Requirements: mkfs.ext4, parted, dd, curl, tar, and qemu-riscv64-static (the host is not
-# riscv64, so Alpine's own apk is run under qemu-user to resolve and unpack riscv64 packages).
+# Requirements: mkfs.ext4, parted, dd, curl, tar, and qemu-riscv64-static.
 
 set -euo pipefail
 
@@ -37,15 +37,15 @@ say "fetching Alpine ${ALPINE_VERSION} minirootfs"
 curl -sfL --retry 3 -o "$WORK/mini.tar.gz" "$MINIROOTFS_URL"
 rm -rf "$ROOT"
 mkdir -p "$ROOT"
-# The tarball has no top-level directory, so it unpacks straight into the target.
+# The tarball has no top-level directory, so it unpacks straight into the target. Unpacking it
+# into an intermediate directory that is then copied yields an image with no base system at all.
 tar xzf "$WORK/mini.tar.gz" -C "$ROOT"
 
 say "fetching apk-tools-static (runs under qemu-user to install riscv64 packages)"
 # Alpine's apk in the minirootfs is dynamically linked and its musl build trips qemu-user's
 # relocation support. The static build has no loader and no shared libraries to relocate.
-# The index is fetched to a file and parsed from there: piping it straight through tar and awk
-# loses the answer, because the awk that finds the version exits early and takes the upstream
-# pipe down with it.
+# The index is fetched to a file and parsed from there: piping it straight through tar loses the
+# answer, because the parser that finds the version exits early and takes the upstream pipe down.
 curl -sfL --retry 3 -o "$WORK/APKINDEX.tar.gz" "${REPO_BASE}/main/riscv64/APKINDEX.tar.gz"
 tar xzf "$WORK/APKINDEX.tar.gz" -C "$WORK" APKINDEX
 # sed rather than awk: awk is not reliably present on every host this runs on.
@@ -60,10 +60,8 @@ APK="$WORK/apk/sbin/apk.static"
 
 say "installing Xorg, the fbdev driver and xinit"
 # shellcheck disable=SC2086
-# apk exits non-zero when a package trigger fails, and under qemu-user the font and busybox
-# triggers always do because they call unshare. Those triggers only rebuild caches, so the exit
-# status is not a signal worth aborting on; what matters is whether the packages landed, and that
-# is checked below.
+# Those trigger failures are the qemu ones described at the top of this file. Whether the
+# install worked is checked directly instead of trusting the exit status.
 "$QEMU" "$APK" --root "$ROOT" --arch riscv64 --usermode --allow-untrusted \
     --repository "${REPO_BASE}/main" \
     --repository "${REPO_BASE}/community" \
