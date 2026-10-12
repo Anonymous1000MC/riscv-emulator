@@ -60,11 +60,21 @@ APK="$WORK/apk/sbin/apk.static"
 
 say "installing Xorg, the fbdev driver and xinit"
 # shellcheck disable=SC2086
+# apk exits non-zero when a package trigger fails, and under qemu-user the font and busybox
+# triggers always do because they call unshare. Those triggers only rebuild caches, so the exit
+# status is not a signal worth aborting on; what matters is whether the packages landed, and that
+# is checked below.
 "$QEMU" "$APK" --root "$ROOT" --arch riscv64 --usermode --allow-untrusted \
     --repository "${REPO_BASE}/main" \
     --repository "${REPO_BASE}/community" \
-    add xorg-server xf86-video-fbdev xinit
-# Font triggers fail under qemu-user (they want unshare) and do not affect the display path.
+    add xorg-server xf86-video-fbdev xinit || true
+
+for required in "$ROOT/usr/bin/Xorg" "$ROOT/usr/lib/xorg/modules/drivers/fbdev_drv.so"; do
+    if [ ! -e "$required" ]; then
+        echo "expected $required after install; the package install did not complete" >&2
+        exit 1
+    fi
+done
 
 say "laying out the guest"
 # /dev must exist before the kernel mounts devtmpfs on it, and a missing mountpoint makes that
