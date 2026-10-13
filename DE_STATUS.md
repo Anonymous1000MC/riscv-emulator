@@ -12,10 +12,34 @@ Where the graphical guest got to, and what is known about the bug that stops it.
 - `/dev/fb0` appears at every boot as a real character device (major 29) provided by the
   emulator's virtio-gpu device. `make_de_rootfs.sh` waits for it and then execs X against it.
 
-## The bug
+## The first bug, fixed
 
-Xorg dies during display initialisation with a machine-mode trap that is not delegated to
-supervisor mode, so the kernel never prints an oops about it.
+Xorg died with a machine-mode trap, not delegated to supervisor mode, so the kernel never
+printed an oops about it. The cause was `csrAccessible` gating every CSR below `0x300` behind
+supervisor privilege, which wrongly included `fflags`, `frm` and `fcsr` at `0x001`-`0x003`.
+Those are unprivileged. Xorg links libm, which reads `frm` on entry, so it trapped on
+`csrrs x15, frm` in the first moments of startup.
+
+The kernel boots at S-mode and passes the privilege test, which is exactly why booting was never
+affected and this only ever appeared through a userspace program that uses floating point.
+
+With that fixed Xorg starts and prints `X.Org X Server 1.21.1.25`.
+
+## The second bug, a misread
+
+`csrrs x15, 0x002` looked like an illegal CSR. It is not: `0x002` is `frm`. Reading the
+instruction as a bare number rather than decoding it sent the previous session after a
+compressed-instruction desync that did not exist.
+
+## Still outstanding
+
+Xorg starts but does not finish initialising within the run, and the behaviour is not yet
+deterministic across runs. A DE is therefore not up yet. Two things are known to be worth
+chasing next:
+
+- let X run for several minutes of guest time; at roughly 30 MIPS a full X startup may simply
+  be slower than the runs so far
+- find whatever still traps non-deterministically once the config parses
 
 A 96-deep instruction trace ring captured the last instructions before the fault:
 
