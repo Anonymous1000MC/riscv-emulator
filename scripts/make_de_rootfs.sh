@@ -91,10 +91,9 @@ Section "Screen"
     Identifier "Screen0"
     Device     "fbdev0"
     DefaultDepth 24
-    DefaultModes "${FB_WIDTH}x${FB_HEIGHT}"
     SubSection "Display"
         Depth   24
-        Modes   "${FB_WIDTH}x${FB_HEIGHT}"
+        Modes   "${FB_WIDTH}x${FB_HEIGHT}" "800x600" "640x480"
     EndSubSection
 EndSection
 Section "ServerLayout"

@@ -1678,7 +1678,15 @@ public final class RiscVCpu {
             return ((counterEn >>> bit) & 1) != 0 || address >= 0xF11;
         }
         if (address < 0x300) {
-            return privilege >= 1;
+            // fflags, frm and fcsr are the one unprivileged group below 0x300. Any user-mode
+            // program that touches the floating point unit reads them - libm does it on entry -
+            // so gating them behind supervisor privilege made ordinary userspace trap on an
+            // instruction the specification says it may execute. Everything else down here really
+            // is supervisor-only.
+            return privilege >= 1
+                    || address == CsrFile.FFLAGS
+                    || address == CsrFile.FRM
+                    || address == CsrFile.FCSR;
         }
         // misa is readable from every privilege level: Linux reads it from S-mode to learn which
         // extensions the hart implements, and rejecting it there made the kernel fall back to its
